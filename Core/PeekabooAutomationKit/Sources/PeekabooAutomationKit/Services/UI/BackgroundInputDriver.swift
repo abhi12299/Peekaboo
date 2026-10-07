@@ -392,7 +392,8 @@ enum BackgroundInputDriver {
     static func keyboardEventPlan(
         keyCode: CGKeyCode,
         flags: CGEventFlags,
-        targetProcessIdentifier: pid_t) throws -> KeyboardEventPlan
+        targetProcessIdentifier: pid_t,
+        targetWindowID: CGWindowID? = nil) throws -> KeyboardEventPlan
     {
         let source = CGEventSource(stateID: .hidSystemState)
         let modifiers = self.modifierKeys(for: flags)
@@ -405,7 +406,8 @@ enum BackgroundInputDriver {
                 keyDown: true,
                 flags: activeFlags,
                 source: source,
-                targetProcessIdentifier: targetProcessIdentifier)
+                targetProcessIdentifier: targetProcessIdentifier,
+                targetWindowID: targetWindowID)
         }
 
         let primaryKeyDownEvent = try self.makeKeyboardEvent(
@@ -413,13 +415,15 @@ enum BackgroundInputDriver {
             keyDown: true,
             flags: flags,
             source: source,
-            targetProcessIdentifier: targetProcessIdentifier)
+            targetProcessIdentifier: targetProcessIdentifier,
+            targetWindowID: targetWindowID)
         let primaryKeyUpEvent = try self.makeKeyboardEvent(
             keyCode: keyCode,
             keyDown: false,
             flags: flags,
             source: source,
-            targetProcessIdentifier: targetProcessIdentifier)
+            targetProcessIdentifier: targetProcessIdentifier,
+            targetWindowID: targetWindowID)
 
         let modifierUpEvents = try modifiers.reversed().map { modifier in
             activeFlags.remove(modifier.flag)
@@ -428,7 +432,8 @@ enum BackgroundInputDriver {
                 keyDown: false,
                 flags: activeFlags,
                 source: source,
-                targetProcessIdentifier: targetProcessIdentifier)
+                targetProcessIdentifier: targetProcessIdentifier,
+                targetWindowID: targetWindowID)
         }
 
         return KeyboardEventPlan(
@@ -443,7 +448,8 @@ enum BackgroundInputDriver {
         keyDown: Bool,
         flags: CGEventFlags,
         source: CGEventSource?,
-        targetProcessIdentifier: pid_t) throws -> CGEvent
+        targetProcessIdentifier: pid_t,
+        targetWindowID: CGWindowID?) throws -> CGEvent
     {
         guard let event = CGEvent(keyboardEventSource: source, virtualKey: keyCode, keyDown: keyDown) else {
             throw PeekabooError.operationError(message: "Failed to create background keyboard events")
@@ -451,6 +457,10 @@ enum BackgroundInputDriver {
 
         event.flags = flags
         self.stampKeyboardRoutingFields(on: event, targetProcessIdentifier: targetProcessIdentifier)
+        if let targetWindowID, let windowField = CGEventField(rawValue: 51) {
+            // Names the exact window for AppKit's dispatch, which otherwise sees window number 0.
+            event.setIntegerValueField(windowField, value: Int64(targetWindowID))
+        }
         return event
     }
 

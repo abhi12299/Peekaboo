@@ -280,7 +280,8 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
                 actionInputDriver: actionInputDriver,
                 processStartIdentityProvider: processStartIdentityProvider,
                 desktopOperationExecutor: executor,
-                operationFinalizer: operationFinalizer)
+                operationFinalizer: operationFinalizer,
+                backgroundFocusSession: BackgroundFocusSession())
         }
         self.gestureService = GestureService()
         let baseCaptureDeps = ScreenCaptureService.Dependencies.live()

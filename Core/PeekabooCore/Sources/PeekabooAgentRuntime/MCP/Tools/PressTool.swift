@@ -10,6 +10,7 @@ import TachikomaMCP
 public struct PressTool: MCPTool {
     private let logger = os.Logger(subsystem: "boo.peekaboo.mcp", category: "PressTool")
     private let context: MCPToolContext
+    private let readEnvironment: @Sendable (String) -> String?
 
     public let name = "press"
 
@@ -100,7 +101,12 @@ public struct PressTool: MCPTool {
     }
 
     public init(context: MCPToolContext = .shared) {
+        self.init(context: context, readEnvironment: { ProcessInfo.processInfo.environment[$0] })
+    }
+
+    init(context: MCPToolContext, readEnvironment: @escaping @Sendable (String) -> String?) {
         self.context = context
+        self.readEnvironment = readEnvironment
     }
 
     func validateArgumentSemantics(_ arguments: ToolArguments) throws {
@@ -343,8 +349,16 @@ public struct PressTool: MCPTool {
                 automation: self.context.automation,
                 operation: "Background hotkeys")
             guard let keyboardTarget = exactWindow.keyboardTarget else {
-                throw PressToolValidationError(
-                    message: "Exact-window background hotkeys require a focused-element receipt.")
+                // The window does not hold its app's keyboard focus yet; the host's focus session makes it
+                // key and proves window focus before the first key.
+                return try await ExactWindowKeyboardRuntime.validateHotkeyRouteReceipt(
+                    outcomeAutomation.hotkeyWithOutcome(
+                        keys: chord.serviceKeys,
+                        holdDuration: hold,
+                        expectedWindowIdentity: exactWindow.identity,
+                        expectedWindowBounds: exactWindow.bounds),
+                    keys: chord.serviceKeys,
+                    operation: "Background hotkeys")
             }
             return try await ExactWindowKeyboardRuntime.validateHotkeyRouteReceipt(
                 outcomeAutomation.hotkeyWithOutcome(
@@ -496,7 +510,9 @@ public struct PressTool: MCPTool {
         }
         do {
             let deliveryTarget = try await plannedTarget.pinningCurrentFocusedElement(
-                using: self.context.automation)
+                using: self.context.automation,
+                allowingUnfocusedWindow: BackgroundFocusSessionSwitch.isEnabled(
+                    readEnvironment: self.readEnvironment))
             return PressDeliveryPlan(target: deliveryTarget, focusResult: nil)
         } catch is CancellationError {
             throw CancellationError()

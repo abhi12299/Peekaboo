@@ -1,6 +1,19 @@
 import CoreGraphics
 import Foundation
+import os.log
 import PeekabooFoundation
+
+/// Whether background input may make its exact target window key for the duration of one action.
+public enum BackgroundFocusSessionSwitch {
+    /// Set to `0` to skip the focus record, priming click, and undo record (the action still runs).
+    public static let environmentKey = "PEEKABOO_BACKGROUND_FOCUS_RECORD"
+
+    public static func isEnabled(
+        readEnvironment: (String) -> String? = { ProcessInfo.processInfo.environment[$0] }) -> Bool
+    {
+        readEnvironment(self.environmentKey) != "0"
+    }
+}
 
 /// Makes one exact background window key for its owner around a single input action, then undoes it.
 @MainActor
@@ -12,8 +25,7 @@ struct BackgroundFocusSession {
     typealias Sleeper = @MainActor (_ duration: Duration) async -> Void
     typealias EnvironmentReader = @MainActor (_ name: String) -> String?
 
-    /// Set to `0` to skip the focus record, priming click, and undo record (the action still runs).
-    static let killSwitchEnvironmentKey = "PEEKABOO_BACKGROUND_FOCUS_RECORD"
+    private static let logger = Logger(subsystem: "boo.peekaboo.core", category: "BackgroundFocusSession")
 
     private let postRecord: RecordPoster
     private let postPrimingEvent: PrimingEventPoster
@@ -44,7 +56,7 @@ struct BackgroundFocusSession {
         target: UIAutomationTarget.ExactWindow,
         action: @MainActor () async throws -> T) async throws -> T
     {
-        guard self.readEnvironment(Self.killSwitchEnvironmentKey) != "0" else {
+        guard BackgroundFocusSessionSwitch.isEnabled(readEnvironment: self.readEnvironment) else {
             return try await action()
         }
         do {
@@ -68,7 +80,14 @@ struct BackgroundFocusSession {
         // Let the action's queued events reach the window while it is still key.
         await self.sleep(.milliseconds(200))
         // Best effort: the action already ran, so an undo failure must not replace its result or error.
-        try? self.postRecord(target, .undo)
+        do {
+            try self.postRecord(target, .undo)
+        } catch {
+            let windowID = target.identity.windowID
+            let cause = error.localizedDescription
+            Self.logger.error(
+                "Focus undo record failed for window \(windowID, privacy: .public): \(cause, privacy: .public)")
+        }
         return try result.get()
     }
 

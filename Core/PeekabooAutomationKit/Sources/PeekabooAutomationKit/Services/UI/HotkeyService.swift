@@ -33,6 +33,7 @@ public final class HotkeyService {
         String, CGEventFlags, pid_t, UIAutomationTarget.ExactWindow?) throws -> Bool
     private let desktopOperationExecutor: DesktopOperationExecutor
     private let operationFinalizer: @MainActor () -> Void
+    private let backgroundFocusSession: BackgroundFocusSession?
 
     public convenience init(
         inputPolicy: UIInputPolicy = .currentBehavior,
@@ -50,7 +51,8 @@ public final class HotkeyService {
             eventPoster: eventPoster ?? Self.defaultTargetedEventPoster,
             runningApplicationResolver: runningApplicationResolver,
             processStartIdentityProvider: SystemIdentityResolver.processStartIdentity,
-            desktopOperationExecutor: DesktopOperationExecutor())
+            desktopOperationExecutor: DesktopOperationExecutor(),
+            backgroundFocusSession: BackgroundFocusSession())
     }
 
     init(
@@ -90,7 +92,8 @@ public final class HotkeyService {
                 try await BackgroundWindowKeyboardPreparation.perform(target: $0, validateOwnership: $1)
             },
         desktopOperationExecutor: DesktopOperationExecutor = DesktopOperationExecutor(),
-        operationFinalizer: @escaping @MainActor () -> Void = {})
+        operationFinalizer: @escaping @MainActor () -> Void = {},
+        backgroundFocusSession: BackgroundFocusSession? = nil)
     {
         self.inputPolicy = inputPolicy
         self.actionInputDriver = actionInputDriver
@@ -107,6 +110,7 @@ public final class HotkeyService {
         self.backgroundWindowPreparer = backgroundWindowPreparer
         self.desktopOperationExecutor = desktopOperationExecutor
         self.operationFinalizer = operationFinalizer
+        self.backgroundFocusSession = backgroundFocusSession
     }
 
     private static func defaultTargetedEventPoster(_ event: CGEvent, _ pid: pid_t) {
@@ -326,10 +330,15 @@ public final class HotkeyService {
                         try await preparation.record(.outcome(self.backgroundWindowPreparer(
                             exactWindow, preparationOwnershipValidator)))
                     }
-                    let outcome = try await self.performTargetedHotkey(
-                        parsedKeys: parsedKeys, plannedChord: plannedChord, holdDuration: holdDuration,
-                        holdNanoseconds: holdNanoseconds,
-                        automationTarget: automationTarget, targetValidator: targetValidator)
+                    // Prepared paste already made the window key through its own preparation.
+                    let outcome = try await self.withBackgroundFocus(
+                        of: automationTarget, enabled: !prepareBackgroundWindow)
+                    {
+                        try await self.performTargetedHotkey(
+                            parsedKeys: parsedKeys, plannedChord: plannedChord, holdDuration: holdDuration,
+                            holdNanoseconds: holdNanoseconds,
+                            automationTarget: automationTarget, targetValidator: targetValidator)
+                    }
                     guard prepareBackgroundWindow else { return outcome }
                     preparation.record(.outcome(outcome))
                     guard let result = preparation.successResolution().outcome else {
@@ -362,6 +371,21 @@ public final class HotkeyService {
         return result
     }
 
+    /// Exact-window keys run while the target window is key for its owner, so the app's own
+    /// shortcut handling sees them as it would for its frontmost window.
+    private func withBackgroundFocus<T>(
+        of automationTarget: UIAutomationTarget,
+        enabled: Bool,
+        _ action: @MainActor () async throws -> T) async throws -> T
+    {
+        guard enabled, let session = self.backgroundFocusSession,
+              let exactWindow = automationTarget.exactWindow
+        else {
+            return try await action()
+        }
+        return try await session.perform(target: exactWindow, action: action)
+    }
+
     private func performTargetedHotkey(
         parsedKeys: [String],
         plannedChord: HotkeyPlan?,
@@ -382,6 +406,7 @@ public final class HotkeyService {
             plan,
             holdNanoseconds: holdNanoseconds,
             targetProcessIdentifier: targetProcessIdentifier,
+            targetWindowID: automationTarget.exactWindow.flatMap { CGWindowID(exactly: $0.identity.windowID) },
             deliveryValidator: targetValidator,
             cleanupProcessIdentity: automationTarget.exactWindow?.identity.processIdentity)
 
@@ -457,6 +482,7 @@ public final class HotkeyService {
         _ plan: HotkeyPlan,
         holdNanoseconds: UInt64,
         targetProcessIdentifier: pid_t,
+        targetWindowID: CGWindowID? = nil,
         deliveryValidator: (@MainActor @Sendable () async throws -> Void)? = nil,
         cleanupProcessIdentity: ApplicationProcessIdentity? = nil) async throws
         -> Int
@@ -468,7 +494,8 @@ public final class HotkeyService {
         let eventPlan = try BackgroundInputDriver.keyboardEventPlan(
             keyCode: plan.keyCode,
             flags: plan.modifierFlags,
-            targetProcessIdentifier: targetProcessIdentifier)
+            targetProcessIdentifier: targetProcessIdentifier,
+            targetWindowID: targetWindowID)
 
         if let cleanupProcessIdentity {
             return try await self.postHeldHotkey(

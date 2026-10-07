@@ -53,9 +53,12 @@ struct MCPExactWindowKeyboardToolTests {
     }
 
     @Test
-    func `Press exact window refuses focused owner drift without dispatch`() async throws {
+    func `Press exact window refuses focused owner drift when the focus session is off`() async throws {
         let fixture = await Self.makeFixture(focusedWindowID: 41)
-        let response = try await PressTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
+        let tool = PressTool(
+            context: fixture.context,
+            readEnvironment: { $0 == BackgroundFocusSessionSwitch.environmentKey ? "0" : nil })
+        let response = try await tool.execute(arguments: ToolArguments(raw: [
             "window_id": 42,
             "keys": ["cmd+l"],
         ]))
@@ -63,6 +66,7 @@ struct MCPExactWindowKeyboardToolTests {
         #expect(response.isError)
         #expect(response.meta?.objectValue?["refusal_reason"] == .string("target_unavailable"))
         #expect(await MainActor.run { fixture.automation.exactHotkeyCalls.isEmpty })
+        #expect(await MainActor.run { fixture.automation.windowHotkeyCalls.isEmpty })
         #expect(await MainActor.run { fixture.automation.lastHotkeyKeys } == nil)
     }
 
@@ -130,6 +134,31 @@ struct MCPExactWindowKeyboardToolTests {
         let call = try #require(await MainActor.run { fixture.automation.exactHotkeyCalls.first })
         #expect(call.target.windowIdentity.windowID == 42)
         #expect(await MainActor.run { fixture.automation.lastHotkeyKeys } == nil)
+        await Self.uiSnapshots.removeSnapshot(id: snapshot.id)
+    }
+
+    @Test
+    func `Background-only snapshot press reaches a window that does not hold its app's keyboard focus`() async throws {
+        let window = Self.keyboardWindow(id: 42, index: 0)
+        let snapshot = await Self.makeSnapshot(window: window)
+        let snapshots = try await InMemorySnapshotManager.containing(snapshot.detectionResult)
+        let fixture = await Self.makeFixture(
+            focusedWindowID: 41,
+            backgroundOnly: true,
+            snapshots: snapshots)
+
+        let response = try await fixture.context.execute(
+            tool: PressTool(context: fixture.context),
+            arguments: ToolArguments(raw: ["snapshot": snapshot.id, "keys": ["cmd+s"]]))
+
+        #expect(!response.isError)
+        let call = try #require(await MainActor.run { fixture.automation.windowHotkeyCalls.first })
+        #expect(call.keys == "cmd,s")
+        #expect(call.windowIdentity == window.mutationIdentity)
+        #expect(call.windowBounds == window.bounds)
+        #expect(await MainActor.run { fixture.automation.exactHotkeyCalls.isEmpty })
+        #expect(await MainActor.run { fixture.automation.lastHotkeyKeys } == nil)
+        #expect(await MainActor.run { fixture.automation.targetedHotkeyCalls.isEmpty })
         await Self.uiSnapshots.removeSnapshot(id: snapshot.id)
     }
 
@@ -429,12 +458,19 @@ private final class ExactKeyboardAutomationService: MockAutomationService,
         let target: ExactWindowKeyboardTarget
     }
 
+    struct WindowHotkeyCall {
+        let keys: String
+        let windowIdentity: WindowMutationIdentity
+        let windowBounds: CGRect
+    }
+
     let supportsExactWindowTargetedKeyboard = true
     let exactWindowTargetedKeyboardUnavailableReason: String? = nil
     let uiAutomationOutcomeScript = UIAutomationOutcomeScript()
     var focusedElementsByPID: [pid_t: UIFocusInfo] = [:]
     private(set) var exactTypeCalls: [TypeCall] = []
     private(set) var exactHotkeyCalls: [HotkeyCall] = []
+    private(set) var windowHotkeyCalls: [WindowHotkeyCall] = []
 
     func getFocusedElement(targetProcessIdentifier: pid_t) async -> UIFocusInfo? {
         self.focusedElementsByPID[targetProcessIdentifier]
@@ -461,6 +497,18 @@ private final class ExactKeyboardAutomationService: MockAutomationService,
         target: ExactWindowKeyboardTarget) async throws
     {
         self.exactHotkeyCalls.append(HotkeyCall(keys: keys, target: target))
+    }
+
+    func hotkey(
+        keys: String,
+        holdDuration _: Int,
+        expectedWindowIdentity: WindowMutationIdentity,
+        expectedWindowBounds: CGRect) async throws
+    {
+        self.windowHotkeyCalls.append(WindowHotkeyCall(
+            keys: keys,
+            windowIdentity: expectedWindowIdentity,
+            windowBounds: expectedWindowBounds))
     }
 }
 

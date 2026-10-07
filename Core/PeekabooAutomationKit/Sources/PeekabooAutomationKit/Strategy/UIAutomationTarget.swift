@@ -241,9 +241,13 @@ public enum UIAutomationTarget: Sendable, Equatable {
             focusedElement: focusedElement))
     }
 
+    /// - Parameter allowingUnfocusedWindow: When the app's keyboard focus is in another window (or
+    ///   nowhere), keep the exact window unpinned instead of refusing. Only for delivery that first makes
+    ///   the window key (a background focus session); dispatch still proves focus before the first key.
     @MainActor
     public func pinningCurrentFocusedElement(
-        using automation: any UIAutomationServiceProtocol) async throws -> UIAutomationTarget
+        using automation: any UIAutomationServiceProtocol,
+        allowingUnfocusedWindow: Bool = false) async throws -> UIAutomationTarget
     {
         guard let exactWindow = self.exactWindow else { return self }
         guard let focusedElementService = automation as? any TargetedFocusedElementServiceProtocol else {
@@ -251,9 +255,12 @@ public enum UIAutomationTarget: Sendable, Equatable {
                 field: "target",
                 reason: "The automation host cannot read exact focused-element receipts")
         }
-        guard let focus = await focusedElementService.getFocusedElement(
+        let focus = await focusedElementService.getFocusedElement(
             targetProcessIdentifier: exactWindow.identity.ownerProcessIdentifier)
-        else {
+        if allowingUnfocusedWindow, focus.map({ !Self.focus($0, isIn: exactWindow) }) ?? true {
+            return self
+        }
+        guard let focus else {
             throw PeekabooError.invalidInput(
                 field: "target",
                 reason: FocusedElementReceiptError.noFocusedElement.localizedDescription + " " +
@@ -299,6 +306,11 @@ public enum UIAutomationTarget: Sendable, Equatable {
             }
         }
         return try self.pinningFocusedElement(focusedElement)
+    }
+
+    private static func focus(_ focus: UIFocusInfo, isIn exactWindow: ExactWindow) -> Bool {
+        focus.processId == Int(exactWindow.identity.ownerProcessIdentifier) &&
+            focus.windowID == exactWindow.identity.windowID
     }
 
     func refined(to exactWindow: ExactWindow) throws -> UIAutomationTarget {
