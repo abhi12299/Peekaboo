@@ -90,6 +90,10 @@ struct WindowRoutedApplicationClassifier {
         return importsWebKit || importsKnownSafari
     }
 
+    static func kind(of application: NSRunningApplication) -> WindowRoutedApplicationKind {
+        Self(application: application).kind
+    }
+
     static func pointerTransport(processIdentifier: pid_t) -> WindowRoutedPointerTransport {
         guard let application = NSRunningApplication(processIdentifier: processIdentifier) else {
             return .publicCGEvent
