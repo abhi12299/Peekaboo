@@ -14,4 +14,14 @@ struct BackgroundWindowActivationDriverTests {
         let populated: Set = [0x04, 0x08, 0x8A, 0x3C, 0x3D, 0x3E, 0x3F]
         #expect(record.indices.allSatisfy { populated.contains($0) || record[$0] == 0 })
     }
+
+    @Test
+    func `undo record differs from the focus record only in its kind byte`() {
+        let focus = BackgroundWindowActivationDriver.eventRecord(windowID: 0x1234_5678, kind: .focus)
+        let undo = BackgroundWindowActivationDriver.eventRecord(windowID: 0x1234_5678, kind: .undo)
+        #expect(undo[0x8A] == 0x02)
+        #expect(focus[0x8A] == 0x01)
+        #expect(undo.count == focus.count)
+        #expect(undo.indices.filter { undo[$0] != focus[$0] } == [0x8A])
+    }
 }
