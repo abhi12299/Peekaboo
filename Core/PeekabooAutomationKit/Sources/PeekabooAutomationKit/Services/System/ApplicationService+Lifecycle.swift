@@ -14,6 +14,7 @@ extension ApplicationService {
         let waitUntilReady: Bool
         let waitForWindow: Bool
         let createsNewInstance: Bool
+        var allowsColdBackgroundLaunch = false
         let disablesRunningApplicationSubstitution: Bool
         let requestedRunningApplicationIdentity: ApplicationProcessIdentity?
         let applicationIdentifier: String?
@@ -73,6 +74,7 @@ extension ApplicationService {
             waitUntilReady: request.waitUntilReady,
             waitForWindow: request.waitForWindow,
             createsNewInstance: request.createsNewInstance,
+            allowsColdBackgroundLaunch: request.allowsColdBackgroundLaunch,
             disablesRunningApplicationSubstitution: identifier.map(Self.isExplicitApplicationPath) == true,
             requestedRunningApplicationIdentity: requestedRunningApplication?.processIdentity,
             applicationIdentifier: identifier)
@@ -83,6 +85,9 @@ extension ApplicationService {
     {
         self.logger.info("Launching application from the owned desktop lane")
         if !launch.activates {
+            if let applicationURL = self.coldBackgroundLaunchURL(launch) {
+                return try await self.performColdBackgroundLaunch(launch, applicationURL: applicationURL)
+            }
             let application = try await self.performVerifiedBackgroundLaunchNoOp(launch)
             let boundApplication = try await self.bindSelectorResolution(application, launch: launch)
             return DesktopActionResult(payload: boundApplication, outcome: .confirmedNoChange())
@@ -342,7 +347,7 @@ extension ApplicationService {
         return NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier)
     }
 
-    private static func application(_ application: NSRunningApplication, matches expectedURL: URL) -> Bool {
+    static func application(_ application: NSRunningApplication, matches expectedURL: URL) -> Bool {
         guard let applicationURL = application.bundleURL else { return false }
         return self.canonicalApplicationPath(applicationURL) == self.canonicalApplicationPath(expectedURL)
     }
@@ -457,7 +462,7 @@ extension ApplicationService {
     /// Capture the process generation while the exact `NSRunningApplication` selected by
     /// LaunchServices is still live. The result is retained through readiness and compared with
     /// the final application snapshot, so a recycled numeric PID can never become a launch receipt.
-    private func captureLaunchProcessIdentity(
+    func captureLaunchProcessIdentity(
         _ application: NSRunningApplication) throws -> ApplicationProcessIdentity
     {
         let processIdentifier = application.processIdentifier
@@ -709,7 +714,7 @@ extension ApplicationService {
         return identifier.contains("/") && FileManager.default.fileExists(atPath: expanded)
     }
 
-    private func waitUntilReadyIfNeeded(
+    func waitUntilReadyIfNeeded(
         _ app: NSRunningApplication,
         requested: Bool,
         expectedIdentity: ApplicationProcessIdentity) async throws
@@ -731,7 +736,7 @@ extension ApplicationService {
         try self.validateLaunchProcessIdentity(expectedIdentity, application: app)
     }
 
-    private func waitForWindowIfNeeded(
+    func waitForWindowIfNeeded(
         _ app: NSRunningApplication,
         requested: Bool,
         expectedIdentity: ApplicationProcessIdentity) async throws

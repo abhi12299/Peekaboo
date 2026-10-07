@@ -47,10 +47,10 @@ struct CommandHelpRendererTests {
     }
 
     @Test
-    func `root app help distinguishes a background readiness probe from foreground launch`() {
+    func `root app help distinguishes a background launch from foreground launch`() {
         let help = AppCommand.helpMessage()
 
-        #expect(help.contains("Verify an already-running application without dispatching a launch"))
+        #expect(help.contains("Launch an application in the background without activating it"))
         #expect(help.contains("Launch or open an application with explicit foreground consent"))
     }
 
@@ -72,8 +72,8 @@ struct CommandHelpRendererTests {
     }
 
     @Test
-    func `deprecated no focus help does not promise a background launch`() {
-        let expected = "Deprecated no-op compatibility flag; default only verifies an already-running app"
+    func `deprecated no focus help describes the non-activating default launch`() {
+        let expected = "Deprecated no-op compatibility flag; default launches without activating the app"
         let help = AppCommand.LaunchSubcommand.helpMessage()
         let explicit = AppCommand.LaunchSubcommand.commanderSignature()
         let reflected = CommandSignature.describe(AppCommand.LaunchSubcommand()).flattened()

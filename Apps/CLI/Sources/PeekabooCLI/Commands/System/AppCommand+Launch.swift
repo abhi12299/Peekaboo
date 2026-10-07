@@ -9,15 +9,16 @@ extension AppCommand {
 
     @MainActor
     struct LaunchSubcommand: InjectedRuntimeBackedCommand {
-        static let noFocusHelp = "Deprecated no-op compatibility flag; default only verifies an already-running app"
+        static let noFocusHelp = "Deprecated no-op compatibility flag; default launches without activating the app"
 
         static let commandDescription = CommandDescription(
             commandName: "launch",
-            abstract: "Verify a running app or explicitly launch it in the foreground",
+            abstract: "Launch an app in the background, or explicitly in the foreground",
             discussion: """
-            Without --foreground, this command is a read-only exact no-op that succeeds only
-            when the selected app is already running. Cold launch, open targets, and new instances
-            require --foreground because macOS may activate the target.
+            Without --foreground, an app that is not running is launched without activating it; if it
+            takes the foreground anyway, the previously frontmost app is re-activated. An app that is
+            already running is left untouched (exact no-op). Open targets and new instances require
+            --foreground because macOS may activate the target.
 
             KEY OPTIONS:
               --bundle-id <id>       Launch by bundle identifier instead of name/path
@@ -25,7 +26,7 @@ extension AppCommand {
               --new-instance         Launch a distinct process even if the app is already running
               --wait-ready           Wait until LaunchServices reports startup complete
               --wait-for-window      Wait for a real AX or WindowServer window
-              --foreground           Required for cold launch, open targets, or a new instance
+              --foreground           Activate the app; required for open targets or a new instance
 
             EXAMPLES:
               peekaboo app launch "Safari"
@@ -52,7 +53,7 @@ extension AppCommand {
         @Flag(help: "Launch a distinct process even if the app is already running")
         var newInstance = false
 
-        @Flag(help: "Required for cold launch, open targets, or a new instance")
+        @Flag(help: "Activate the app; required for open targets or a new instance")
         var foreground = false
 
         @Flag(help: AppCommand.LaunchSubcommand.noFocusHelp)
@@ -79,12 +80,12 @@ extension AppCommand {
                 self.logger.verbose(
                     self.foreground
                         ? "Launching application: \(self.requestedAppIdentifier)"
-                        : "Verifying already-running application: \(self.requestedAppIdentifier)"
+                        : "Launching application in the background: \(self.requestedAppIdentifier)"
                 )
                 if self.noFocus {
                     self.logger.warn(
                         "--no-focus is deprecated and has no effect; without --foreground, " +
-                            "app launch only verifies an already-running app"
+                            "app launch never activates the app"
                     )
                 }
                 if self.foreground {
@@ -97,7 +98,7 @@ extension AppCommand {
                 self.renderLaunchSuccess(
                     app: launch.result.payload,
                     outcome: launch.result.outcome,
-                    isSafeBackgroundNoOp: launch.request.isSafeBackgroundNoOp
+                    activates: launch.request.activates
                 )
             } catch {
                 handleError(error, customCode: applicationLaunchErrorCode(for: error))
@@ -150,7 +151,7 @@ extension AppCommand {
         private func renderLaunchSuccess(
             app: ServiceApplicationInfo,
             outcome: DesktopActionOutcome?,
-            isSafeBackgroundNoOp: Bool
+            activates: Bool
         ) {
             struct LaunchResult: Codable {
                 let action: String
@@ -189,7 +190,8 @@ extension AppCommand {
             )
 
             output(data, outcome: outcome) {
-                if isSafeBackgroundNoOp || outcome?.state == .confirmedNoChange {
+                // A legacy host without canonical outcomes cannot cold-launch in the background.
+                if outcome?.state == .confirmedNoChange || (outcome == nil && !activates) {
                     print("✓ Already running: \(app.name) (PID: \(app.processIdentifier)); no launch dispatched")
                 } else {
                     print("✓ Launched \(app.name) (PID: \(app.processIdentifier))")
@@ -212,7 +214,8 @@ extension AppCommand {
                 activates: self.shouldFocusAfterLaunch,
                 waitUntilReady: self.waitUntilReady,
                 waitForWindow: self.waitForWindow,
-                createsNewInstance: self.newInstance
+                createsNewInstance: self.newInstance,
+                allowsColdBackgroundLaunch: !self.shouldFocusAfterLaunch
             )
             let result = try await ApplicationServiceBridge.launchApplication(
                 applications: self.services.applications,

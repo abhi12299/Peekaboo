@@ -29,7 +29,8 @@ extension AppToolActions {
             activates: request.foreground,
             waitUntilReady: request.waitUntilReady,
             waitForWindow: request.waitForWindow,
-            createsNewInstance: request.newInstance)
+            createsNewInstance: request.newInstance,
+            allowsColdBackgroundLaunch: !request.foreground)
         let actionResult = try await self.service.launchApplicationResult(request: launchRequest)
         let app = actionResult.payload
         let outcome = try self.validatedBackgroundLaunchNoOpOutcome(
@@ -37,8 +38,10 @@ extension AppToolActions {
             request: launchRequest)
 
         let timing = self.executionTimeString(since: request.startTime)
-        let message = if launchRequest.isSafeBackgroundNoOp ||
-            outcome?.state == .confirmedNoChange
+        // A legacy service without canonical outcomes cannot cold-launch in the background, so its successful
+        // background launch is still the already-running no-op.
+        let message = if outcome?.state == .confirmedNoChange ||
+            (outcome == nil && !launchRequest.activates)
         {
             "\(AgentDisplayTokens.Status.success) \(app.name) was already running "
                 + "(PID: \(app.processIdentifier)); no launch was needed (\(timing))"
@@ -68,7 +71,11 @@ extension AppToolActions {
         _ result: DesktopActionResult<ServiceApplicationInfo>,
         request: ApplicationLaunchRequest) throws -> DesktopActionOutcome?
     {
-        guard request.isSafeBackgroundNoOp,
+        // A background launch authorized against an already-running process is pinned to that PID and can only
+        // be an exact no-op. Without an authorized running target it may be a cold background launch.
+        guard !request.activates,
+              request.openURLs.isEmpty,
+              !request.createsNewInstance,
               let context,
               let authorization = AuthorizedDesktopTargetPlan.current
         else { return result.outcome }

@@ -26,6 +26,19 @@ struct AppCommandLaunchFlowTests {
     }
 
     @Test
+    func `Background launch may cold-start a non-running app without activating it`() async throws {
+        let service = self.makeLaunchService(name: "Finder", bundleIdentifier: "com.apple.finder")
+        var command = AppCommand.LaunchSubcommand()
+        command.app = "Finder"
+
+        try await command.run(using: self.makeRuntime(applicationService: service))
+
+        let request = try #require(service.launchRequests.first)
+        #expect(!request.activates)
+        #expect(request.allowsColdBackgroundLaunch)
+    }
+
+    @Test
     func `Launch activates only with foreground`() async throws {
         let service = self.makeLaunchService(name: "Finder", bundleIdentifier: "com.apple.finder")
         var command = AppCommand.LaunchSubcommand()

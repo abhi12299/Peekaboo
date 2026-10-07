@@ -1019,6 +1019,13 @@ extension MCPToolContext {
         }
 
         do {
+            if let authorization = try await self.backgroundColdApplicationLaunchAuthorization(
+                toolName: toolName,
+                arguments: arguments,
+                schema: schema)
+            {
+                return authorization
+            }
             if let authorization = try await self.backgroundExactWindowTargetAuthorization(
                 toolName: toolName,
                 arguments: arguments)
@@ -1074,8 +1081,7 @@ extension MCPToolContext {
             let detail = if toolName == "app",
                             arguments.getString("action")?.lowercased() == "launch"
             {
-                "background launch is limited to an exact already-running application readiness check; " +
-                    "cold launch requires explicit foreground consent: \(error.detail)"
+                "background launch could not resolve the selected application before dispatch: \(error.detail)"
             } else {
                 error.detail
             }

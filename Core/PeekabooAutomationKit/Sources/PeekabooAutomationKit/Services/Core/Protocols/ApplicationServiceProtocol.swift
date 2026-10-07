@@ -10,6 +10,9 @@ public struct ApplicationLaunchRequest: Sendable, Codable, Equatable {
     public let waitUntilReady: Bool
     public let waitForWindow: Bool
     public let createsNewInstance: Bool
+    /// A non-activating launch may start an application that is not running. LaunchServices opens it without
+    /// activation and the service hands the foreground back if the new process takes it anyway.
+    public let allowsColdBackgroundLaunch: Bool
 
     public init(
         applicationIdentifier: String? = nil,
@@ -18,7 +21,8 @@ public struct ApplicationLaunchRequest: Sendable, Codable, Equatable {
         activates: Bool = false,
         waitUntilReady: Bool = false,
         waitForWindow: Bool = false,
-        createsNewInstance: Bool = false)
+        createsNewInstance: Bool = false,
+        allowsColdBackgroundLaunch: Bool = false)
     {
         self.applicationIdentifier = applicationIdentifier
         self.applicationBundleIdentifier = applicationBundleIdentifier
@@ -27,11 +31,12 @@ public struct ApplicationLaunchRequest: Sendable, Codable, Equatable {
         self.waitUntilReady = waitUntilReady
         self.waitForWindow = waitForWindow
         self.createsNewInstance = createsNewInstance
+        self.allowsColdBackgroundLaunch = allowsColdBackgroundLaunch
     }
 
     /// This request can only verify an existing process; it cannot dispatch a launch or target delivery.
     public var isSafeBackgroundNoOp: Bool {
-        !self.activates && self.openURLs.isEmpty && !self.createsNewInstance
+        !self.activates && self.openURLs.isEmpty && !self.createsNewInstance && !self.allowsColdBackgroundLaunch
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -42,6 +47,7 @@ public struct ApplicationLaunchRequest: Sendable, Codable, Equatable {
         case waitUntilReady
         case waitForWindow
         case createsNewInstance
+        case allowsColdBackgroundLaunch
     }
 
     public init(from decoder: any Decoder) throws {
@@ -55,6 +61,9 @@ public struct ApplicationLaunchRequest: Sendable, Codable, Equatable {
         self.waitUntilReady = try container.decode(Bool.self, forKey: .waitUntilReady)
         self.waitForWindow = try container.decodeIfPresent(Bool.self, forKey: .waitForWindow) ?? false
         self.createsNewInstance = try container.decodeIfPresent(Bool.self, forKey: .createsNewInstance) ?? false
+        self.allowsColdBackgroundLaunch = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .allowsColdBackgroundLaunch) ?? false
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -66,6 +75,10 @@ public struct ApplicationLaunchRequest: Sendable, Codable, Equatable {
         try container.encode(self.waitUntilReady, forKey: .waitUntilReady)
         try container.encode(self.waitForWindow, forKey: .waitForWindow)
         try container.encode(self.createsNewInstance, forKey: .createsNewInstance)
+        // Omitted when false so existing payloads stay byte-for-byte compatible with older peers.
+        if self.allowsColdBackgroundLaunch {
+            try container.encode(true, forKey: .allowsColdBackgroundLaunch)
+        }
     }
 }
 

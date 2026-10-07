@@ -41,7 +41,7 @@ extension AppCommand.LaunchSubcommand: CommanderSignatureProviding {
                 ),
                 .commandFlag(
                     "foreground",
-                    help: "Required for cold launch, open targets, or a new instance",
+                    help: "Activate the app; required for open targets or a new instance",
                     long: "foreground"
                 ),
                 .commandFlag(

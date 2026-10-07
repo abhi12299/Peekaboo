@@ -16,31 +16,35 @@ public struct AppTool: MCPTool {
         if self.context.executionPolicy == .backgroundOnly {
             return """
             Control applications under immutable background-only authority. Available actions are `list`, `quit`,
-            `hide`, and `launch`; background `launch` is only an exact already-running readiness probe and never cold
-            starts an app. Focus, switch, open, relaunch, unhide, new-instance, and `foreground=true` are unavailable
-            here because they can activate shared desktop UI. A human must start a foreground-capable Agent session or
-            use the standalone CLI with explicit foreground consent for those operations.
+            `hide`, and `launch`; background `launch` starts an app that is not running without activating it (if the
+            app takes the foreground anyway, the previously frontmost app is re-activated) and is an exact no-op when
+            the app is already running. Focus, switch, open, relaunch, unhide, new-instance, and `foreground=true` are
+            unavailable here because they can activate shared desktop UI. A human must start a
+            foreground-capable Agent session or use the standalone CLI with explicit foreground consent for those
+            operations.
 
             Process-generation chaining must use `target_identity.process_start_identity_decimal`; the numeric
             `process_start_identity` field remains compatibility-only and can lose precision above 2^53.
 
             Always include the `action` field in your JSON payload. Examples:
             - { "action": "list" }
-            - Already-running readiness probe: { "action": "launch", "name": "Finder" }
+            - Background launch without activation: { "action": "launch", "name": "Finder" }
             - { "action": "quit", "name": "Slack", "force": false }
             """
         }
 
         return """
         Control applications with explicit foreground-capable authority. Focus and switch activate shared desktop UI;
-        cold launch, open, new-instance, relaunch, and unhide require `foreground=true` because macOS cannot guarantee
-        those operations preserve the user's foreground work. Prefer background targeting after foreground setup.
+        open, new-instance, relaunch, and unhide require `foreground=true` because macOS cannot guarantee those
+        operations preserve the user's foreground work. `launch` without `foreground` starts a non-running app without
+        activating it and hands the foreground back if the app takes it. Prefer background targeting after setup.
         Process-generation chaining must use `target_identity.process_start_identity_decimal`; the numeric
         `process_start_identity` field remains compatibility-only and can lose precision above 2^53.
 
         Always include the `action` field in your JSON payload. Examples:
         - Already-running readiness probe: { "action": "launch", "name": "PID:1234" }
-        - Cold launch with foreground consent: { "action": "launch", "name": "Calendar", "foreground": true }
+        - Background launch without activation: { "action": "launch", "name": "Calendar" }
+        - Foreground launch: { "action": "launch", "name": "Calendar", "foreground": true }
         - { "action": "launch", "name": "TextEdit", "newInstance": true, "foreground": true }
         - { "action": "open", "name": "Safari", "openTargets": ["https://example.com"], "foreground": true }
         - { "action": "switch", "to": "Safari" }
@@ -84,7 +88,7 @@ public struct AppTool: MCPTool {
                 items: SchemaBuilder.string(),
                 description: "URL or file paths to open; required for open, optional for launch")
             properties["foreground"] = SchemaBuilder.boolean(
-                description: "Required for cold launch, open, new-instance, relaunch, and unhide",
+                description: "Required for open, new-instance, relaunch, unhide, and activating launch",
                 default: false)
             properties["wait"] = SchemaBuilder.number(
                 description: "Wait time (seconds) between quit/launch for relaunch",
