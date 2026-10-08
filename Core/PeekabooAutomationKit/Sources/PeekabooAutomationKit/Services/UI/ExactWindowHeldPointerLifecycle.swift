@@ -230,6 +230,8 @@ final class ExactWindowHeldPointerLifecycle {
     private let watchdogSleeper: @MainActor @Sendable () async throws -> Void
     private let beginResolutionHook: @MainActor @Sendable () async -> Void
     private let dragSleeper: @MainActor @Sendable (Duration) async throws -> Void
+    /// Makes the target window key around a one-shot left drag; `nil` dispatches drags without it.
+    private let backgroundFocusSession: BackgroundFocusSession?
     private let ownerCapacity: Int
     private let terminalRetentionCapacity: Int
     private let terminalRetentionDuration: TimeInterval
@@ -251,7 +253,8 @@ final class ExactWindowHeldPointerLifecycle {
         },
         ownerCapacity: Int = 1024,
         terminalRetentionCapacity: Int = 256,
-        terminalRetentionDuration: TimeInterval = 60)
+        terminalRetentionDuration: TimeInterval = 60,
+        backgroundFocusSession: BackgroundFocusSession? = nil)
     {
         self.laneCoordinator = laneCoordinator
         self.pointerDriver = pointerDriver
@@ -261,6 +264,7 @@ final class ExactWindowHeldPointerLifecycle {
         self.watchdogSleeper = watchdogSleeper
         self.beginResolutionHook = beginResolutionHook
         self.dragSleeper = dragSleeper
+        self.backgroundFocusSession = backgroundFocusSession
         self.ownerCapacity = max(1, ownerCapacity)
         self.terminalRetentionCapacity = max(1, terminalRetentionCapacity)
         self.terminalRetentionDuration = max(0, terminalRetentionDuration)
@@ -282,6 +286,7 @@ final class ExactWindowHeldPointerLifecycle {
     func begin(
         owner: ExactWindowHeldPointerOwner,
         request: ExactWindowHeldPointerRequest,
+        usesFocusSession: Bool = false,
         validateTarget: @escaping @MainActor @Sendable () async throws -> Void = {}) async throws
         -> UIAutomationActionResult<ExactWindowHeldPointerReceipt>
     {
@@ -325,7 +330,11 @@ final class ExactWindowHeldPointerLifecycle {
 
         let lifecycleTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            await self.runHold(token: token, request: request, validateTarget: validateTarget)
+            await self.runHold(
+                token: token,
+                request: request,
+                usesFocusSession: usesFocusSession,
+                validateTarget: validateTarget)
         }
         self.holds[token]?.lifecycleTask = lifecycleTask
 
@@ -443,6 +452,9 @@ final class ExactWindowHeldPointerLifecycle {
                     windowBounds: request.target.bounds,
                     button: request.button,
                     expiresAfterSeconds: Double(request.durationMilliseconds) / 1000 + 2),
+                // Left drags need a key window (first-mouse refusal); right drags keep the plain
+                // route, matching background clicks.
+                usesFocusSession: request.button == .left,
                 validateTarget: validateTarget)
             let receipt = started.payload
             let termination: ExactWindowHeldPointerTermination
@@ -556,6 +568,7 @@ final class ExactWindowHeldPointerLifecycle {
     private func runHold(
         token: UUID,
         request: ExactWindowHeldPointerRequest,
+        usesFocusSession: Bool,
         validateTarget: @escaping @MainActor @Sendable () async throws -> Void) async
     {
         guard let hold = self.holds[token] else { return }
@@ -579,30 +592,34 @@ final class ExactWindowHeldPointerLifecycle {
                     target: ExactWindowPointerTarget(
                         identity: request.windowIdentity,
                         bounds: request.windowBounds))
-                guard hold.terminalSignal.resolvedValue == nil else {
-                    throw ExactWindowHeldPointerLifecycleError.cancelledBeforeDispatch
-                }
-                guard self.ownerBindingIsCurrent(hold.owner) else {
-                    throw ExactWindowHeldPointerLifecycleError.ownerDisconnectedBeforeDispatch
-                }
-                guard self.monotonicNow() < hold.expirationDeadline else {
-                    throw ExactWindowHeldPointerLifecycleError.cancelledBeforeDispatch
-                }
-                let downUnits = try await self.pointerDriver.postHeldDown(dispatch)
-                self.holds[token]?.dispatch = dispatch
-                self.holds[token]?.dispatchedUnitCount = downUnits
-                hold.start.resolve(.started(hold.receipt, dispatchedUnitCount: downUnits))
-                self.startWatchdog(token: token)
+                // The target and route are proven first, so a refused request sends no focus record.
+                // The session's undo record then follows the terminal mouse-up on every path.
+                try await self.withFocusSession(usesFocusSession, request: request) {
+                    guard hold.terminalSignal.resolvedValue == nil else {
+                        throw ExactWindowHeldPointerLifecycleError.cancelledBeforeDispatch
+                    }
+                    guard self.ownerBindingIsCurrent(hold.owner) else {
+                        throw ExactWindowHeldPointerLifecycleError.ownerDisconnectedBeforeDispatch
+                    }
+                    guard self.monotonicNow() < hold.expirationDeadline else {
+                        throw ExactWindowHeldPointerLifecycleError.cancelledBeforeDispatch
+                    }
+                    let downUnits = try await self.pointerDriver.postHeldDown(dispatch)
+                    self.holds[token]?.dispatch = dispatch
+                    self.holds[token]?.dispatchedUnitCount = downUnits
+                    hold.start.resolve(.started(hold.receipt, dispatchedUnitCount: downUnits))
+                    self.startWatchdog(token: token)
 
-                let reason = await hold.terminalSignal.wait()
-                completedReason = reason
-                self.holds[token]?.watchdogTask?.cancel()
-                if let current = self.holds[token], let lastDispatch = current.dispatch {
-                    completedTerminal = self.finishHold(
-                        hold: current,
-                        dispatch: lastDispatch,
-                        downUnitCount: current.dispatchedUnitCount,
-                        reason: reason)
+                    let reason = await hold.terminalSignal.wait()
+                    completedReason = reason
+                    self.holds[token]?.watchdogTask?.cancel()
+                    if let current = self.holds[token], let lastDispatch = current.dispatch {
+                        completedTerminal = self.finishHold(
+                            hold: current,
+                            dispatch: lastDispatch,
+                            downUnitCount: current.dispatchedUnitCount,
+                            reason: reason)
+                    }
                 }
             }
         } catch {
@@ -648,6 +665,22 @@ final class ExactWindowHeldPointerLifecycle {
             self.pruneTerminalHolds()
             hold.terminal.resolve(completedTerminal)
         }
+    }
+
+    /// Runs the hold's down-to-up span while its window is key for the owner, when a session applies.
+    /// The session's record and priming events are not counted as the hold's dispatched units.
+    private func withFocusSession(
+        _ usesFocusSession: Bool,
+        request: ExactWindowHeldPointerRequest,
+        action: @MainActor () async throws -> Void) async throws
+    {
+        guard usesFocusSession, let session = self.backgroundFocusSession else {
+            return try await action()
+        }
+        let target = try UIAutomationTarget.ExactWindow(
+            identity: request.windowIdentity,
+            bounds: request.windowBounds)
+        try await session.perform(target: target, action: action)
     }
 
     private func startWatchdog(token: UUID) {

@@ -229,7 +229,8 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
         self.desktopOperationExecutor = executor
         self.heldPointerLifecycle = ExactWindowHeldPointerLifecycle(
             laneCoordinator: operationLaneCoordinator,
-            processStartIdentityProvider: processStartIdentityProvider)
+            processStartIdentityProvider: processStartIdentityProvider,
+            backgroundFocusSession: BackgroundFocusSession())
 
         // Initialize specialized services
         let elementDetectionService = ElementDetectionService(snapshotManager: manager)
