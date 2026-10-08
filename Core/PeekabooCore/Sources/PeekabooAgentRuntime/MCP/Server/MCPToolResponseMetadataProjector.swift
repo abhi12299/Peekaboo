@@ -35,11 +35,16 @@ enum MCPToolResponseMetadataProjector {
         "state",
     ]
 
+    /// Set by `click` when the action left its snapshot usable for further element clicks. It complements
+    /// the canonical `requires_fresh_observation`, which still describes retrying the action itself.
+    static let snapshotReusableForElementClicksKey = "snapshot_reusable_for_element_clicks"
+
     private static let safetyKeys = Self.actionOutcomeKeys.union([
         "browser_execution",
         "error_code",
         "execution_policy",
         "snapshot_invalidation",
+        Self.snapshotReusableForElementClicksKey,
         "target_identity",
         "target_receipt",
     ])

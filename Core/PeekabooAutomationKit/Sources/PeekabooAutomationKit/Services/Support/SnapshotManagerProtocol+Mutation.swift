@@ -8,7 +8,8 @@ extension SnapshotManagerProtocol {
         targetIdentity: DesktopTargetIdentity? = nil,
         operation: () async throws -> Value,
         outcome: (Value) -> DesktopActionOutcome?,
-        fallbackRequiresFreshObservation: (Value) -> Bool = { _ in true }) async throws -> Value
+        fallbackRequiresFreshObservation: (Value) -> Bool = { _ in true },
+        keepsSnapshotReusable: (Value) -> Bool = { _ in false }) async throws -> Value
     {
         guard let snapshotId = snapshotId?.trimmingCharacters(in: .whitespacesAndNewlines),
               !snapshotId.isEmpty
@@ -45,11 +46,15 @@ extension SnapshotManagerProtocol {
         }
 
         let canonicalOutcome = outcome(value)
+        // A caller may prove that a returned action left this snapshot's targets usable even though the
+        // action itself must still be observed before it is retried.
+        let requiresFreshObservation = keepsSnapshotReusable(value)
+            ? false
+            : canonicalOutcome?.projection.requiresFreshObservation ?? fallbackRequiresFreshObservation(value)
         do {
             try await self.finishSnapshotMutation(
                 lease,
-                requiresFreshObservation: canonicalOutcome?.projection.requiresFreshObservation ??
-                    fallbackRequiresFreshObservation(value))
+                requiresFreshObservation: requiresFreshObservation)
         } catch {
             throw DesktopActionFailure.indeterminate(
                 route: canonicalOutcome?.route ?? .local,

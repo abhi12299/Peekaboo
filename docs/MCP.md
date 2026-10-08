@@ -373,6 +373,13 @@ retry-safety guidance, and any provider-authored receipt. A sequence continues p
 retrying. `click`, `type`, and `scroll` report accepted-but-unverified delivery the same way (`type` leaves
 `characters_typed` null). Indeterminate, suspected-no-op, refused, and missing outcomes remain errors.
 
+A background single `click` on an element ID that was delivered as an Accessibility action (confirmed, or accepted
+but unverified) releases its snapshot instead of consuming it: further element clicks may pass the same explicit
+`snapshot`, each one revalidating the exact window, and `_meta.snapshot_reusable_for_element_clicks` is `true`.
+Verify with one observation at the end. The canonical `requires_fresh_observation` still describes retrying that
+click. Pointer-routed clicks, other click variants, key presses, typing, drags, scrolls, and every indeterminate
+outcome still require a fresh `see` before the next mutation.
+
 Successful `type` responses preserve the typing result's `target_identity` and `target_receipt` in public `_meta`,
 including ordinary and pixel-focus typing. Process identities retain the generation as a lossless decimal string;
 exact-window identities also retain the window ID. Missing result identity, including untargeted foreground typing,

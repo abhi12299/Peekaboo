@@ -21,6 +21,9 @@ public struct ClickTool: MCPTool {
         Background delivery is the default. Background coordinates require a nonempty snapshot or coordinate_reference
         from a fresh exact-window `see`; pid alone is never a safe coordinate target. Set `foreground` to true only for
         intentional shared-pointer input, which may omit the capture reference.
+        A delivered click is a success even when its effect is unverified. When the result says its snapshot may be
+        reused, keep clicking element IDs from that same explicit snapshot and observe once at the end; otherwise
+        run `see` again before the next action.
         \(PeekabooMCPVersion.banner) using openai/gpt-5.6, anthropic/claude-opus-5
         """
     }
@@ -152,7 +155,10 @@ public struct ClickTool: MCPTool {
                                 message: error.message)
                         }
                     },
-                    outcome: { $0.outcome })
+                    outcome: { $0.outcome },
+                    keepsSnapshotReusable: {
+                        Self.keepsSnapshotReusable(request: request, resolution: resolution, outcome: $0.outcome)
+                    })
                 modifierResult = nil
             } else {
                 let result = try await self.performModifierClick(
@@ -189,7 +195,11 @@ public struct ClickTool: MCPTool {
                     outcome: outcome,
                     targetIdentity: actionResult.targetIdentity,
                     modifiers: request.modifiers,
-                    modifierResult: modifierResult))
+                    modifierResult: modifierResult,
+                    reusableSnapshotId: Self.keepsSnapshotReusable(
+                        request: request,
+                        resolution: resolution,
+                        outcome: outcome) ? resolution.snapshotIdToInvalidate : nil))
         } catch is CancellationError {
             await self.discardObservation(id: waitedSnapshotID)
             throw CancellationError()
@@ -228,6 +238,25 @@ public struct ClickTool: MCPTool {
     }
 
     // MARK: - Private Helpers
+
+    /// A background element click delivered as an accessibility action leaves the snapshot's other element
+    /// IDs usable: every later click still revalidates the exact window and that its element belongs to it.
+    /// Pointer events, other click variants and any uncertain outcome keep requiring a fresh observation.
+    private static func keepsSnapshotReusable(
+        request: ClickRequest,
+        resolution: ClickResolution,
+        outcome: DesktopActionOutcome?) -> Bool
+    {
+        guard request.deliveryMode == .background,
+              request.modifiers.isEmpty,
+              request.intent.automationType == .single,
+              resolution.queryWait == nil,
+              case .elementId = resolution.automationTarget,
+              let outcome,
+              outcome.delivery == .init(mechanism: .accessibilityAction, mode: .background)
+        else { return false }
+        return outcome.state == .confirmedChange || MCPDeliveredUnverifiedInput.matches(outcome)
+    }
 
     private func getSnapshot(id: String?) async -> UISnapshot? {
         await self.context.uiSnapshots.getSnapshot(id: id)
@@ -525,7 +554,13 @@ public struct ClickTool: MCPTool {
         }
         request += " at (\(Int(resolution.location.x)), \(Int(resolution.location.y)))"
         request += " in \(String(format: "%.2f", execution.executionTime))s"
-        let message = if MCPDeliveredUnverifiedInput.matches(execution.outcome) {
+        let message = if let snapshotId = execution.reusableSnapshotId,
+                         MCPDeliveredUnverifiedInput.matches(execution.outcome)
+        {
+            "\(AgentDisplayTokens.Status.success) Dispatched click \(request) as an accessibility action; " +
+                "delivery is unverified and unsafe to retry blindly. Snapshot '\(snapshotId)' may be reused for " +
+                "further element clicks (pass it as `snapshot`); verify the results with one observation at the end."
+        } else if MCPDeliveredUnverifiedInput.matches(execution.outcome) {
             MCPDeliveredUnverifiedInput.message(dispatched: "click \(request)", verifying: "click")
         } else {
             ActionOutcomeHumanRenderer.statusLine(for: execution.outcome, operation: "Click") +
@@ -545,6 +580,9 @@ public struct ClickTool: MCPTool {
         try metaDict.merge(MCPDesktopTargetMetadataProjector.fields(execution.targetIdentity)) { _, target in target }
         if let invalidatedSnapshotId = execution.invalidatedSnapshotId {
             metaDict["invalidated_snapshot"] = .string(invalidatedSnapshotId)
+        }
+        if execution.reusableSnapshotId != nil {
+            metaDict[MCPToolResponseMetadataProjector.snapshotReusableForElementClicksKey] = .bool(true)
         }
         if let processId = execution.targetProcessIdentifier.map({ Int32($0) }) {
             metaDict["target_pid"] = .double(Double(processId))
@@ -1224,6 +1262,7 @@ private struct ClickResponseExecution {
     let targetIdentity: DesktopTargetIdentity?
     let modifiers: [PointerModifier]
     let modifierResult: ForegroundModifierClickResult?
+    let reusableSnapshotId: String?
 }
 
 private struct CapturedCoordinateSnapshot {
