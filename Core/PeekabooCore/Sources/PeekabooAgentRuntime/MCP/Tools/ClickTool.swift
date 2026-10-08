@@ -167,7 +167,7 @@ public struct ClickTool: MCPTool {
             }
             actionTargetIdentity = actionResult.targetIdentity
             let outcome = actionResult.outcome
-            if request.modifiers.isEmpty {
+            if request.modifiers.isEmpty, !MCPDeliveredUnverifiedInput.matches(outcome) {
                 try DesktopActionFailure.requireConfirmedIfReported(
                     outcome,
                     operation: "Click")
@@ -519,13 +519,18 @@ public struct ClickTool: MCPTool {
         resolution: ClickResolution,
         execution: ClickResponseExecution) throws -> ToolResponse
     {
-        var message = ActionOutcomeHumanRenderer.statusLine(for: execution.outcome, operation: "Click")
-        message += "\nClick request: \(intent.automationType.rawValue)"
+        var request = intent.automationType.rawValue
         if let element = resolution.elementDescription {
-            message += " on \(element)"
+            request += " on \(element)"
         }
-        message += " at (\(Int(resolution.location.x)), \(Int(resolution.location.y)))"
-        message += " in \(String(format: "%.2f", execution.executionTime))s"
+        request += " at (\(Int(resolution.location.x)), \(Int(resolution.location.y)))"
+        request += " in \(String(format: "%.2f", execution.executionTime))s"
+        let message = if MCPDeliveredUnverifiedInput.matches(execution.outcome) {
+            MCPDeliveredUnverifiedInput.message(dispatched: "click \(request)", verifying: "click")
+        } else {
+            ActionOutcomeHumanRenderer.statusLine(for: execution.outcome, operation: "Click") +
+                "\nClick request: \(request)"
+        }
 
         var metaDict: [String: Value] = [
             "click_location": .object([

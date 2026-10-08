@@ -15,8 +15,15 @@ struct MCPExactWindowKeyboardToolTests {
     func `AX select all retains its leaf target while remaining unverified`() async throws {
         let fixture = await Self.makeFixture(focusedWindowID: 42)
         await MainActor.run {
+            // Only Cmd+A may use the value route; the following chord is delivered as window events.
+            fixture.automation.uiAutomationOutcomeScript.append(
+                .dispatchedUnverified(
+                    delivery: .init(mechanism: .accessibilityValue, mode: .background),
+                    evidence: .deliveryAccepted,
+                    unitCount: .one),
+                for: .hotkey)
             fixture.automation.uiAutomationOutcomeScript.setDefaultOutcome(.dispatchedUnverified(
-                delivery: .init(mechanism: .accessibilityValue, mode: .background),
+                delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
                 evidence: .deliveryAccepted,
                 unitCount: .one))
         }
@@ -24,12 +31,12 @@ struct MCPExactWindowKeyboardToolTests {
             "window_id": 42, "keys": ["cmd+a", "cmd+l"],
         ]))
 
-        #expect(response.isError)
-        #expect(await MainActor.run { fixture.automation.exactHotkeyCalls.count } == 1)
+        #expect(!response.isError)
+        #expect(await MainActor.run { fixture.automation.exactHotkeyCalls.count } == 2)
         let metadata = try #require(response.meta?.objectValue)
         #expect(metadata["state"] == .string("dispatched_unverified"))
-        #expect(metadata["delivery_mechanism"] == .string("accessibility_value"))
-        #expect(metadata["dispatched_unit_count"] == .int(1))
+        #expect(metadata["delivery_mode"] == .string("background"))
+        #expect(metadata["dispatched_unit_count"] == .int(2))
         let receipt = try #require(metadata["target_receipt"]?.objectValue)
         #expect(receipt["pid"] == .int(333))
         #expect(receipt["window_id"] == .int(42))
@@ -182,7 +189,7 @@ struct MCPExactWindowKeyboardToolTests {
             tool: PressTool(context: fixture.context),
             arguments: ToolArguments(raw: ["snapshot": snapshot.id, "keys": ["cmd+a"]]))
 
-        #expect(response.isError)
+        #expect(!response.isError)
         let metadata = try #require(response.meta?.objectValue)
         #expect(metadata["state"] == .string("dispatched_unverified"))
         #expect(metadata["delivery_mechanism"] == .string("accessibility_value"))
@@ -320,7 +327,7 @@ struct MCPExactWindowKeyboardToolTests {
     }
 
     @Test
-    func `Exact Type CLI parity treats dispatched-unverified characters as non-success`() async throws {
+    func `Exact Type reports dispatched-unverified characters as a success without typed-character claims`() async throws {
         let fixture = await Self.makeFixture(focusedWindowID: 42)
         await MainActor.run {
             fixture.automation.uiAutomationOutcomeScript.setDefaultOutcome(.dispatchedUnverified(
@@ -334,7 +341,7 @@ struct MCPExactWindowKeyboardToolTests {
             "text": "hello",
         ]))
 
-        #expect(response.isError)
+        #expect(!response.isError)
         #expect(response.meta?.objectValue?["state"] == .string("dispatched_unverified"))
         #expect(response.meta?.objectValue?["characters_typed"] == .null)
         #expect(await MainActor.run { fixture.automation.exactTypeCalls.count } == 1)

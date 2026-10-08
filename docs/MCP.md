@@ -367,8 +367,11 @@ foreground-capable runtimes retain their documented process-targeted typing rout
 `press` preserves provider-authored `target_identity` and `target_receipt` in public `_meta` when its contributing
 phases attest a compatible common target. A missing or contradictory leaf target is not filled from setup focus
 or descriptive PID/window fields. Typed failures retain the receipts of the dispatched phases when those agree.
-The existing confirmed-effect requirement is unchanged: an accepted but unverified chord still returns an error,
-with its actual dispatch count, retry-safety guidance, and any provider-authored receipt; observe before continuing.
+An accepted but unverified chord is a success with a warning, not an error: the text starts with the success
+token and says delivery is unverified, and `_meta` keeps `dispatched_unverified`, the actual dispatch count,
+retry-safety guidance, and any provider-authored receipt. A sequence continues past such a chord; observe before
+retrying. `click`, `type`, and `scroll` report accepted-but-unverified delivery the same way (`type` leaves
+`characters_typed` null). Indeterminate, suspected-no-op, refused, and missing outcomes remain errors.
 
 Successful `type` responses preserve the typing result's `target_identity` and `target_receipt` in public `_meta`,
 including ordinary and pixel-focus typing. Process identities retain the generation as a lossless decimal string;

@@ -236,9 +236,14 @@ public struct ScrollTool: MCPTool {
         let executionTime = Date().timeIntervalSince(startTime)
         let scrollDescription = request.smooth ? "smooth scroll" : "scroll"
         let duration = String(format: "%.2f", executionTime) + "s"
-        let message = ActionOutcomeHumanRenderer.statusLine(for: responseOutcome, operation: "Scroll") +
-            "\nScroll request: \(scrollDescription) \(request.direction) " +
+        let scrollRequest = "\(scrollDescription) \(request.direction) " +
             "(\(request.amount) ticks) \(target.description) in \(duration)"
+        let message = if MCPDeliveredUnverifiedInput.matches(responseOutcome) {
+            MCPDeliveredUnverifiedInput.message(dispatched: scrollRequest, verifying: "scroll")
+        } else {
+            ActionOutcomeHumanRenderer.statusLine(for: responseOutcome, operation: "Scroll") +
+                "\nScroll request: \(scrollRequest)"
+        }
 
         let summary = ToolEventSummary(
             targetApp: target.appName,
@@ -295,7 +300,7 @@ public struct ScrollTool: MCPTool {
             if let outcome = actionResult.outcome {
                 _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
                     outcome,
-                    policy: .confirmed,
+                    policy: MCPDeliveredUnverifiedInput.successPolicy(for: outcome),
                     operation: "Scroll",
                     targetReceipt: request.foreground ? nil : actionResult.actionTargetReceipt,
                     rejectedOutcomeMessage: "Scroll did not return a confirmed outcome.")

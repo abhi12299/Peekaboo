@@ -41,7 +41,8 @@ extension TypeTool {
         request: TypeRequest,
         executionTime: TimeInterval,
         result: TypeResult,
-        typingDispatched: Bool) -> String
+        typingDispatched: Bool,
+        deliveryUnverified: Bool = false) -> String
     {
         let duration = String(format: "%.2f", executionTime) + "s"
         guard typingDispatched else {
@@ -78,6 +79,11 @@ extension TypeTool {
         actions.append("Special keys: \(specialKeys)")
 
         let summary = actions.isEmpty ? "Performed no actions" : actions.joined(separator: ", ")
+        if deliveryUnverified {
+            return MCPDeliveredUnverifiedInput.message(
+                dispatched: "typing (\(summary)) in \(duration)",
+                verifying: "text")
+        }
         return "\(AgentDisplayTokens.Status.success) \(summary) in \(duration)"
     }
 

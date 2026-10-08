@@ -235,7 +235,7 @@ extension MCPDesktopActionOutcomeProjectionTests {
 
     @Test
     @MainActor
-    func `foreground scroll failures do not attribute global input to a reported target`() async throws {
+    func `unverified foreground scrolls do not attribute global input to a reported target`() async throws {
         let automation = StubAutomationService()
         automation.actionOutcome = .dispatchedUnverified(
             delivery: .init(mechanism: .globalEvents, mode: .foreground),
@@ -251,7 +251,7 @@ extension MCPDesktopActionOutcomeProjectionTests {
             "foreground": true,
         ]))
 
-        #expect(response.isError)
+        #expect(!response.isError)
         try MCPToolTestHelpers.expectCanonicalOutcomeMetadata(automation.actionOutcome, in: response)
         #expect(response.meta?.objectValue?["target_receipt"] == nil)
         #expect(response.meta?.objectValue?["target_identity"] == nil)

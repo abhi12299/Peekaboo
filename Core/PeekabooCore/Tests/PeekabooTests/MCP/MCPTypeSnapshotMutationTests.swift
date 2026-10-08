@@ -64,7 +64,7 @@ struct MCPTypeSnapshotMutationTests {
         let response = try await TypeTool(context: fixture.context).execute(
             arguments: Self.arguments(fixture, focus: true))
 
-        #expect(response.isError)
+        #expect(!response.isError)
         #expect(response.meta?.objectValue?["mutation_dispatched"] == .bool(true))
         #expect(response.meta?.objectValue?["dispatched_unit_count"] == .int(4))
         #expect(response.meta?.objectValue?["retry_safe"] == .bool(false))
@@ -140,7 +140,7 @@ struct MCPTypeSnapshotMutationTests {
             "text": "synthetic",
         ]))
 
-        #expect(response.isError)
+        #expect(!response.isError)
         #expect(response.meta?.objectValue?["state"] == .string("dispatched_unverified"))
         #expect(fixture.automation.pixelCalls == 1)
         #expect(fixture.automation.typeCalls == 0)

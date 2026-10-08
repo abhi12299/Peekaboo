@@ -15,7 +15,7 @@ struct MCPComposedInputParityTests {
     private static let uiSnapshots = MCPToolUISnapshotStore(owner: MCPToolSnapshotOwner())
 
     @Test
-    func `pixel focus type maps exact request but reports unverified dispatch as non-success`() async throws {
+    func `pixel focus type maps exact request and reports unverified dispatch without typed characters`() async throws {
         let fixture = try await Self.makeFixture()
         let response = try await TypeTool(context: fixture.context).execute(arguments: ToolArguments(raw: [
             "coords": "500,250",
@@ -24,7 +24,7 @@ struct MCPComposedInputParityTests {
             "text": "hi",
         ]))
 
-        #expect(response.isError)
+        #expect(!response.isError)
         let request = try #require(await MainActor.run { fixture.automation.pixelFocusTypeRequests.first })
         #expect(request.point == CGPoint(x: 600, y: 300))
         #expect(request.snapshotID == fixture.snapshotID)
@@ -53,7 +53,7 @@ struct MCPComposedInputParityTests {
             "text": "hi",
         ]))
 
-        #expect(response.isError)
+        #expect(!response.isError)
         let request = try #require(await MainActor.run { fixture.automation.pixelFocusTypeRequests.first })
         #expect(request.windowIdentity == fixture.window.mutationIdentity)
         #expect(request.windowBounds == fixture.window.bounds)

@@ -283,7 +283,7 @@ public struct PressTool: MCPTool {
                     if let outcome = result.outcome {
                         _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
                             result,
-                            policy: .confirmed,
+                            policy: MCPDeliveredUnverifiedInput.successPolicy(for: outcome),
                             operation: "Raw chord \(chord.displayValue)",
                             rejectedOutcomeMessage: "Raw chord \(chord.displayValue) did not return a confirmed outcome.")
                         allChordsConfirmedNoChange = allChordsConfirmedNoChange &&
@@ -607,9 +607,14 @@ public struct PressTool: MCPTool {
             return "\(AgentDisplayTokens.Status.success) Completed \(sequence); " +
                 "all chords confirmed no change in \(duration)s"
         }
+        let chords = "\(input.completed) raw chord\(input.completed == 1 ? "" : "s")"
+        if MCPDeliveredUnverifiedInput.matches(input.outcome) {
+            return MCPDeliveredUnverifiedInput.message(
+                dispatched: "press \(sequence) (\(chords)) in \(duration)s",
+                verifying: "key press")
+        }
         return ActionOutcomeHumanRenderer.statusLine(for: input.outcome, operation: "Press") +
-            "\nSequence: \(sequence) (\(input.completed) raw chord\(input.completed == 1 ? "" : "s")); " +
-            "elapsed \(duration)s"
+            "\nSequence: \(sequence) (\(chords)); elapsed \(duration)s"
     }
 
     private static func foregroundConsentRefusal() throws -> ToolResponse {

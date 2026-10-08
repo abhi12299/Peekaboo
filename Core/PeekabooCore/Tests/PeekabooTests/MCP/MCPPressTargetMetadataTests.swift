@@ -47,7 +47,7 @@ struct MCPPressTargetMetadataTests {
     }
 
     @Test
-    func `unverified press stays an error with one leaf receipt and no replay`() async throws {
+    func `unverified press continues its sequence and succeeds with its leaf receipt`() async throws {
         let identity = try Self.identity()
         let automation = PressMetadataAutomation(replies: [
             .success(Self.result(identity, outcome: Self.unverified)),
@@ -55,14 +55,12 @@ struct MCPPressTargetMetadataTests {
         ])
         let response = try await Self.execute(automation, count: 2)
 
-        #expect(response.isError)
-        #expect(automation.calls == 1)
-        #expect(response.meta?.objectValue?["emitted_units"] == .int(1))
+        #expect(!response.isError)
+        #expect(automation.calls == 2)
         for metadata in try Self.metadata(response) {
             #expect(metadata["state"] == .string("dispatched_unverified"))
-            #expect(metadata["dispatched_unit_count"] == .int(1))
+            #expect(metadata["dispatched_unit_count"] == .int(2))
             #expect(metadata["retry_safe"] == .bool(false))
-            #expect(metadata["target_identity"] == nil)
             #expect(try metadata["target_receipt"] == Value(identity.actionTargetReceipt))
         }
     }
@@ -93,7 +91,7 @@ struct MCPPressTargetMetadataTests {
     }
 
     @Test(arguments: [false, true])
-    func `setup focus cannot lend its target to an unattributed legacy or rejected chord`(reported: Bool) async throws {
+    func `setup focus cannot lend its target to an unattributed legacy or unverified chord`(reported: Bool) async throws {
         let automation = PressMetadataAutomation(replies: [
             .success(Self.result(nil, outcome: reported ? Self.unverified : nil)),
         ])
@@ -103,7 +101,7 @@ struct MCPPressTargetMetadataTests {
             "keys": ["cmd+a"], "foreground": true, "app": "Example", "delay": 0,
         ]))
 
-        #expect(response.isError == reported)
+        #expect(!response.isError)
         #expect(windows.focusCalls == 1)
         #expect(automation.calls == 1)
         for metadata in try Self.metadata(response) {

@@ -100,7 +100,8 @@ key-up cleanup, and any accepted prefix remains unsafe to replay.
   non-success and requires a fresh observation. Standalone CLI callers can opt into `--accept-dispatched` to return
   exit 0 and `success: true` for this state, like `press` and `click`, without claiming the text arrived. The outcome
   still reports `effect: unverifiable`, `retry_safe: false`, and `requires_fresh_observation: true`; confirmed counters
-  remain zero and `typedText` is omitted. This flag does not change foreground consent or Agent/MCP acceptance.
+  remain zero and `typedText` is omitted. This flag does not change foreground consent. The MCP `type` tool
+  accepts this state on its own: it returns a success with an observe-before-retry warning and `characters_typed: null`.
   Missing, refused, partial, indeterminate, suspected-no-op, and confirmed-no-change results remain non-success.
   `typedText`, `totalCharacters`, and `keyPresses` claim completed work
   only when the typing effect is a confirmed change. `confirmed_no_change` and missing outcomes are also non-success.

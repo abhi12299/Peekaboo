@@ -556,7 +556,7 @@ extension TypeTool {
                 windowIdentity: target.exactWindow.identity,
                 windowBounds: target.exactWindow.bounds))
         let expectedIdentity = DesktopTargetIdentity(exactWindow: target.exactWindow)
-        _ = try UIAutomationActionResultSemantics.requireConfirmedChange(
+        try TypeActionResultSemantics.requireChangeOrAcceptedDelivery(
             actionResult,
             deliveryMode: .background,
             targetRequirement: .exact(expectedIdentity),
@@ -591,10 +591,14 @@ extension TypeTool {
             request: input.request,
             executionTime: executionTime,
             result: input.actionResult.payload,
-            typingDispatched: typingDispatched)
+            typingDispatched: typingDispatched,
+            deliveryUnverified: MCPDeliveredUnverifiedInput.matches(responseOutcome))
         var baseMetaDict: [String: Value] = [
             "execution_time": .double(executionTime),
-            "characters_typed": .double(Double(charactersTyped)),
+            // Accepted but unverified keystrokes prove no typed characters.
+            "characters_typed": MCPDeliveredUnverifiedInput.matches(input.actionResult.outcome)
+                ? .null
+                : .double(Double(charactersTyped)),
         ]
         if !input.focusCompleted {
             baseMetaDict["delivery_mode"] = .string(
@@ -1054,7 +1058,7 @@ private enum TypeActionResultSemantics {
         sequence: DesktopActionSequenceAccumulator) throws
     {
         do {
-            _ = try UIAutomationActionResultSemantics.requireConfirmedChange(
+            try self.requireChangeOrAcceptedDelivery(
                 result,
                 deliveryMode: target == nil ? .foreground : .background,
                 operation: "Typing")
@@ -1064,6 +1068,29 @@ private enum TypeActionResultSemantics {
                 message: "Typing failed after its element focus action completed.",
                 hint: "Observe the target before deciding whether to retry typing."))
         }
+    }
+
+    /// Typing must change its destination, or report keystrokes the receiver accepted: a success the caller
+    /// must observe. A confirmed no-change result still cannot satisfy a request to type.
+    static func requireChangeOrAcceptedDelivery(
+        _ result: UIAutomationActionResult<TypeResult>,
+        deliveryMode: DesktopActionOutcome.Delivery.Mode,
+        targetRequirement: UIAutomationActionResultSemantics.TargetRequirement = .optional,
+        operation: String) throws
+    {
+        guard MCPDeliveredUnverifiedInput.matches(result.outcome) else {
+            _ = try UIAutomationActionResultSemantics.requireConfirmedChange(
+                result,
+                deliveryMode: deliveryMode,
+                targetRequirement: targetRequirement,
+                operation: operation)
+            return
+        }
+        _ = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
+            result,
+            policy: .confirmedOrDispatched(requiring: deliveryMode),
+            targetRequirement: targetRequirement,
+            operation: operation)
     }
 }
 

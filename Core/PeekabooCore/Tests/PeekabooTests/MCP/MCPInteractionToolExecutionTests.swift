@@ -840,7 +840,7 @@ extension MCPToolExecutionTests {
                 variant: true,
             ]))
 
-            #expect(response.isError)
+            #expect(!response.isError)
             let call = try #require(await MainActor.run { automation.targetedClickCalls.first })
             #expect(call.clickType == clickType)
             #expect(call.targetWindowID == window.windowID)

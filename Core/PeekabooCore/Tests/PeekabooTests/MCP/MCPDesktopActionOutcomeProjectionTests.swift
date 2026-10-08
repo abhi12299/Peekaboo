@@ -610,8 +610,9 @@ struct MCPDesktopActionOutcomeProjectionTests {
             #expect(response.isError)
             try MCPToolTestHelpers.expectCanonicalOutcomeMetadata(elementOutcome, in: response)
         }
+        // Raw input the receiver accepted is a success with a warning; element actions still require confirmation.
         for response in otherResponses {
-            #expect(response.isError)
+            #expect(!response.isError)
             try MCPToolTestHelpers.expectCanonicalOutcomeMetadata(outcome, in: response)
         }
     }
@@ -1146,7 +1147,7 @@ extension MCPDesktopActionOutcomeProjectionTests {
 
     @Test
     @MainActor
-    func `returned dispatched type outcome invalidates its explicit snapshot through failure handling`() async throws {
+    func `returned dispatched type outcome succeeds and invalidates its explicit snapshot`() async throws {
         let automation = StubAutomationService()
         automation.actionOutcome = .dispatchedUnverified(
             delivery: .init(mechanism: .globalEvents, mode: .foreground),
@@ -1164,7 +1165,7 @@ extension MCPDesktopActionOutcomeProjectionTests {
             "foreground": true,
         ]))
 
-        #expect(response.isError)
+        #expect(!response.isError)
         let meta = try #require(response.meta?.objectValue)
         #expect(meta["state"] == .string("dispatched_unverified"))
         #expect(meta["mutation_dispatched"] == .bool(true))
@@ -1211,7 +1212,7 @@ extension MCPDesktopActionOutcomeProjectionTests {
 
     @Test
     @MainActor
-    func `every non-confirmed typing state is MCP error without typed-character claims`() async throws {
+    func `only accepted delivery is a typing success and no unconfirmed state claims typed characters`() async throws {
         let delivery = DesktopActionOutcome.Delivery(mechanism: .globalEvents, mode: .foreground)
         let outcomes: [DesktopActionOutcome?] = [
             nil,
@@ -1232,7 +1233,8 @@ extension MCPDesktopActionOutcomeProjectionTests {
                 "foreground": true,
             ]))
 
-            #expect(response.isError)
+            let deliveryAccepted = outcome?.state == .dispatchedUnverified
+            #expect(response.isError == !deliveryAccepted)
             #expect(response.meta?.objectValue?["characters_typed"] == .null)
         }
     }
