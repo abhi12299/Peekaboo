@@ -218,6 +218,51 @@ struct ApplicationServiceOperationLaneTests {
         try await contender.value
         #expect(await contenderStarted.isOpen)
     }
+
+    @Test
+    @MainActor
+    func `Cold background launch holds the write lane until LaunchServices returns`() async throws {
+        let runningApplication = try #require(
+            NSRunningApplication.runningApplications(withBundleIdentifier: "com.apple.finder").first)
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-background-launch-lane-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let coordinator = DesktopOperationLaneCoordinator(coordinationRootURL: root)
+        let openStarted = ApplicationOperationLatch()
+        let openRelease = ApplicationOperationLatch()
+        let contenderStarted = ApplicationOperationLatch()
+        let generation = try #require(SystemIdentityResolver.processStartIdentity(
+            runningApplication.processIdentifier))
+        let service = ApplicationService(
+            operationLaneCoordinator: coordinator,
+            applicationOpenHandler: { _, _, _ in
+                await openStarted.open()
+                await openRelease.wait()
+                return runningApplication
+            },
+            runningApplicationsForURLProvider: { _ in [] },
+            frontmostProcessIdentifierProvider: { nil },
+            applicationActivationSleepHandler: { _ in },
+            processStartIdentityProvider: { _ in generation })
+
+        let launch = Task { @MainActor in
+            try await service.launchApplication(request: ApplicationLaunchRequest(
+                applicationIdentifier: "Finder",
+                allowsColdBackgroundLaunch: true))
+        }
+        await openStarted.wait()
+        let contender = Task {
+            try await coordinator.run(scope: .global, access: .read) {
+                await contenderStarted.open()
+            }
+        }
+
+        #expect(await !(contenderStarted.opensWithin(.milliseconds(100))))
+        await openRelease.open()
+        _ = try await launch.value
+        try await contender.value
+        #expect(await contenderStarted.isOpen)
+    }
 }
 
 private actor ApplicationOperationLatch {

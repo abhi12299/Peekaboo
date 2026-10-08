@@ -83,8 +83,70 @@ struct MCPBackgroundPolicyExecutionTests {
     }
 
     @Test
-    func `background-only refuses cold application launch before dispatch`() async throws {
-        let applications = await MainActor.run { MockApplicationService() }
+    func `background-only cold-launches a non-running app in the background`() async throws {
+        let applications = await MainActor.run {
+            let service = LaunchOutcomeApplicationService()
+            service.launchOutcome = .confirmedChange(
+                delivery: .init(mechanism: .nativeFramework, mode: .background),
+                unitCount: .one)
+            return service
+        }
+        let context = await MCPToolTestHelpers.makeContext(
+            applications: applications,
+            snapshotOwner: Self.uiSnapshots.owner,
+            executionPolicy: .backgroundOnly)
+
+        let response = try await context.execute(
+            tool: AppTool(context: context),
+            arguments: ToolArguments(raw: [
+                "action": "launch",
+                "name": "TextEdit",
+            ]))
+
+        #expect(!response.isError)
+        let request = try #require(await MainActor.run { applications.launchRequests.first })
+        #expect(await MainActor.run { applications.launchRequests.count } == 1)
+        #expect(request.applicationIdentifier == "TextEdit")
+        #expect(!request.activates)
+        #expect(request.allowsColdBackgroundLaunch)
+    }
+
+    @Test
+    func `background-only refuses a cold launch of shared system UI before dispatch`() async throws {
+        let applications = await MainActor.run { LaunchOutcomeApplicationService() }
+        let context = await MCPToolTestHelpers.makeContext(
+            applications: applications,
+            snapshotOwner: Self.uiSnapshots.owner,
+            executionPolicy: .backgroundOnly)
+
+        let response = try await context.execute(
+            tool: AppTool(context: context),
+            arguments: ToolArguments(raw: [
+                "action": "launch",
+                "name": "Siri",
+            ]))
+
+        #expect(response.isError)
+        #expect(await MainActor.run { applications.launchRequests.isEmpty })
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["error_code"] == .string(MCPToolExecutionPolicy.refusalErrorCode))
+        #expect(meta["mutation_dispatched"] == .bool(false))
+    }
+
+    @Test
+    func `background-only launch of a running app still requires an exact no-op outcome`() async throws {
+        let textEdit = ServiceApplicationInfo(
+            processIdentifier: 89,
+            processStartIdentity: 890,
+            bundleIdentifier: "com.apple.TextEdit",
+            name: "TextEdit")
+        let applications = await MainActor.run {
+            let service = LaunchOutcomeApplicationService(applications: [textEdit])
+            service.launchOutcome = .confirmedChange(
+                delivery: .init(mechanism: .nativeFramework, mode: .background),
+                unitCount: .one)
+            return service
+        }
         let context = await MCPToolTestHelpers.makeContext(
             applications: applications,
             snapshotOwner: Self.uiSnapshots.owner,
@@ -98,17 +160,8 @@ struct MCPBackgroundPolicyExecutionTests {
             ]))
 
         #expect(response.isError)
-        #expect(await MainActor.run { applications.launchRequests.isEmpty })
-        guard case let .text(text, _, _)? = response.content.first,
-              case let .object(meta)? = response.meta
-        else {
-            Issue.record("Expected structured cold-launch policy refusal")
-            return
-        }
-        #expect(text.contains("cold launch requires explicit foreground consent"))
-        #expect(meta["error_code"] == .string(MCPToolExecutionPolicy.refusalErrorCode))
-        #expect(meta["mutation_dispatched"] == .bool(false))
-        #expect(meta["retry_safe"] == .bool(true))
+        let request = try #require(await MainActor.run { applications.launchRequests.first })
+        #expect(request.applicationIdentifier == "PID:89")
     }
 
     @Test
@@ -319,21 +372,23 @@ struct MCPBackgroundPolicyExecutionTests {
             snapshotOwner: Self.uiSnapshots.owner,
             executionPolicy: .foregroundAllowed)
         let description = AppTool(context: context).description
-        let backgroundOnlyProbeExample =
-            #"Already-running readiness probe: { "action": "launch", "name": "Finder" }"#
+        let backgroundLaunchExample =
+            #"Background launch without activation: { "action": "launch", "name": "Finder" }"#
         let backgroundProbeExample =
             #"Already-running readiness probe: { "action": "launch", "name": "PID:1234" }"#
-        let coldLaunchExample =
-            #"Cold launch with foreground consent: { "action": "launch", "name": "Calendar", "foreground": true }"#
+        let foregroundLaunchExample =
+            #"Foreground launch: { "action": "launch", "name": "Calendar", "foreground": true }"#
         let newInstanceExample =
             #"{ "action": "launch", "name": "TextEdit", "newInstance": true, "foreground": true }"#
         let openExample =
             #"{ "action": "open", "name": "Safari", "openTargets": ["https://example.com"], "foreground": true }"#
 
-        #expect(backgroundDescription.contains(backgroundOnlyProbeExample))
-        #expect(!backgroundDescription.contains("Cold launch with foreground consent"))
+        #expect(backgroundDescription.contains(backgroundLaunchExample))
+        #expect(!backgroundDescription.contains("never cold starts an app"))
+        #expect(!backgroundDescription.contains("Foreground launch"))
         #expect(description.contains(backgroundProbeExample))
-        #expect(description.contains(coldLaunchExample))
+        #expect(description.contains(foregroundLaunchExample))
+        #expect(!description.contains("cold launch, open"))
         #expect(description.contains(newInstanceExample))
         #expect(description.contains(openExample))
     }
@@ -361,6 +416,24 @@ struct MCPBackgroundPolicyExecutionTests {
             return
         }
         #expect(meta["process_start_identity"] == .double(1000))
+    }
+
+    @Test
+    func `App tool background launch may cold-start a non-running app without activating it`() async throws {
+        let mockApps = await MainActor.run { MockApplicationService() }
+        let context = await MCPToolTestHelpers.makeContext(
+            applications: mockApps,
+            snapshotOwner: Self.uiSnapshots.owner)
+
+        let response = try await AppTool(context: context).execute(arguments: ToolArguments(raw: [
+            "action": "launch",
+            "name": "TextEdit",
+        ]))
+
+        #expect(response.isError == false)
+        let request = try #require(await MainActor.run { mockApps.launchRequests.first })
+        #expect(request.activates == false)
+        #expect(request.allowsColdBackgroundLaunch)
     }
 
     @Test
@@ -860,5 +933,43 @@ private actor BackgroundPolicyInvocationCounter {
 private final class ReadinessFailureApplicationService: MockApplicationService {
     override func launchApplication(request _: ApplicationLaunchRequest) async throws -> ServiceApplicationInfo {
         throw ApplicationLifecycleReadOnlyFailureError(.timeout("Window readiness timed out"))
+    }
+}
+
+@MainActor
+private final class LaunchOutcomeApplicationService: MockApplicationService, ApplicationServiceActionResultProviding {
+    var launchOutcome: DesktopActionOutcome = .confirmedNoChange()
+
+    func launchApplicationActionResult(
+        request: ApplicationLaunchRequest) async throws -> DesktopActionResult<ServiceApplicationInfo>
+    {
+        let application = try await self.launchApplication(request: request)
+        return DesktopActionResult(payload: application, outcome: self.launchOutcome)
+    }
+
+    func relaunchApplicationActionResult(
+        request _: ApplicationRelaunchRequest) async throws -> DesktopActionResult<ServiceApplicationInfo>
+    {
+        throw PeekabooError.operationError(message: "Unexpected relaunch")
+    }
+
+    func activateApplicationActionResult(
+        request _: ApplicationActivationRequest) async throws -> DesktopActionResult<Void>
+    {
+        throw PeekabooError.operationError(message: "Unexpected activation")
+    }
+
+    func quitApplicationActionResult(
+        request _: ApplicationQuitRequest) async throws -> DesktopActionResult<Bool>
+    {
+        throw PeekabooError.operationError(message: "Unexpected quit")
+    }
+
+    func hideApplicationActionResult(identifier _: String) async throws -> DesktopActionResult<Void> {
+        throw PeekabooError.operationError(message: "Unexpected hide")
+    }
+
+    func unhideApplicationActionResult(identifier _: String) async throws -> DesktopActionResult<Void> {
+        throw PeekabooError.operationError(message: "Unexpected unhide")
     }
 }

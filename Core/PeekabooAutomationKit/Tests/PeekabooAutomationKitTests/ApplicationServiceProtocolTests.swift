@@ -32,6 +32,13 @@ struct ApplicationServiceProtocolTests {
     }
 
     @Test
+    func `cold background launch opt-in is not a read-only no-op check`() {
+        #expect(!ApplicationLaunchRequest(
+            applicationIdentifier: "Fixture",
+            allowsColdBackgroundLaunch: true).isSafeBackgroundNoOp)
+    }
+
+    @Test
     func `application outcome policy retains legacy nil compatibility`() throws {
         try ApplicationActionResultSemantics.requireSuccessfulOutcome(
             nil,

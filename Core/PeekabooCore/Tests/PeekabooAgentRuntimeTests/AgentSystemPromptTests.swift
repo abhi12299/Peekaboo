@@ -319,8 +319,8 @@ struct AgentSystemPromptTests {
         let prompt = AgentSystemPrompt.generate()
 
         #expect(prompt.contains(#""action": "launch", "name": "Safari", "waitUntilReady": true"#))
-        #expect(prompt.contains("already-running readiness check"))
-        #expect(prompt.contains("Cold launch,"))
+        #expect(prompt.contains("starts a non-running app in the background without activating it"))
+        #expect(!prompt.contains("Cold launch,"))
         #expect(prompt.contains("focus, and switch are unavailable in this session"))
         #expect(!prompt.contains(#""action": "open", "name": "Safari""#))
         #expect(prompt.contains("Reuse only an existing exact connection"))

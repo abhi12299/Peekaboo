@@ -330,8 +330,8 @@ public struct AgentSystemPrompt {
     private static func calculatorSection(allowsForeground: Bool, catalog: Catalog) -> String {
         let start = allowsForeground
             ? "Use the `app` tool with `{ \"action\": \"launch\", \"name\": \"Calculator\", \"foreground\": true }`."
-            : "Use the `app` tool with `{ \"action\": \"launch\", \"name\": \"Calculator\" }` only to verify an " +
-            "already-running Calculator. If it is not running, \(catalog.unavailableGuidance); do not request foreground launch."
+            : "Use the `app` tool with `{ \"action\": \"launch\", \"name\": \"Calculator\" }`; it starts Calculator " +
+            "in the background without activating it. Do not request foreground launch."
         let observation = catalog.contains("inspect_ui") ? "`inspect_ui`" : "`see`"
         return """
         **Calculations**
@@ -348,14 +348,16 @@ public struct AgentSystemPrompt {
         if catalog.contains("app") {
             guidance.append("Use `app` with `{ \"action\": \"list\" }` to check whether the app is running.")
             guidance.append(allowsForeground ? """
-            Work in the background by default. An app launch with `foreground: false` is only an exact already-running
-            no-op probe. Cold launch, URL/document open, new-instance, relaunch, and unhide require `foreground: true`
-            because macOS cannot guarantee they preserve the user's foreground work. For example:
+            Work in the background by default. An app launch with `foreground: false` starts a non-running app in the
+            background without activating it and is an exact no-op when the app is already running. URL/document open,
+            new-instance, relaunch, and unhide require `foreground: true` because macOS cannot guarantee they preserve
+            the user's foreground work. For example:
             `{ "action": "launch", "name": "Safari", "foreground": true, "waitUntilReady": true }`.
             """ : """
-            Use `{ "action": "launch", "name": "Safari", "waitUntilReady": true }` only as an exact
-            already-running readiness check. Cold launch, URL/document open, new-instance, relaunch, unhide,
-            focus, and switch are unavailable in this session. If the target is not running, \(catalog.unavailableGuidance).
+            `{ "action": "launch", "name": "Safari", "waitUntilReady": true }`
+            starts a non-running app in the background without activating it and is an exact readiness check when the
+            app is already running. URL/document open, new-instance, relaunch, unhide,
+            focus, and switch are unavailable in this session.
             """)
         }
         if catalog.contains("window") {

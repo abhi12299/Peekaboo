@@ -182,6 +182,8 @@ public final class ApplicationService: ApplicationServiceProtocol, ApplicationMu
     let applicationActivationTimeout: Duration
     let applicationQuitTimeout: TimeInterval
     let applicationVisibilityTimeout: TimeInterval
+    let backgroundLaunchHandBackWindow: Duration
+    let backgroundLaunchHandBackPollInterval: Duration
     let operationLaneCoordinator: DesktopOperationLaneCoordinator
 
     /// Timeout for accessibility API calls to prevent hangs
@@ -304,7 +306,9 @@ public final class ApplicationService: ApplicationServiceProtocol, ApplicationMu
         applicationReadinessTimeout: TimeInterval = 10,
         applicationActivationTimeout: Duration = .seconds(2),
         applicationQuitTimeout: TimeInterval = 3,
-        applicationVisibilityTimeout: TimeInterval = 1)
+        applicationVisibilityTimeout: TimeInterval = 1,
+        backgroundLaunchHandBackWindow: Duration = .seconds(3),
+        backgroundLaunchHandBackPollInterval: Duration = .milliseconds(25))
     {
         // Set global AX timeout to prevent hangs
         AXTimeoutConfiguration.setGlobalTimeout(Self.axTimeout)
@@ -350,6 +354,8 @@ public final class ApplicationService: ApplicationServiceProtocol, ApplicationMu
         self.applicationActivationTimeout = applicationActivationTimeout
         self.applicationQuitTimeout = max(0, applicationQuitTimeout)
         self.applicationVisibilityTimeout = max(0, applicationVisibilityTimeout)
+        self.backgroundLaunchHandBackWindow = max(.zero, backgroundLaunchHandBackWindow)
+        self.backgroundLaunchHandBackPollInterval = max(.milliseconds(1), backgroundLaunchHandBackPollInterval)
 
         // Connect to visual feedback if available.
         let isMacApp = Bundle.main.bundleIdentifier?.hasPrefix("boo.peekaboo.mac") == true

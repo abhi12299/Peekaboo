@@ -8,7 +8,8 @@ extension ApplicationService {
     public func launchApplicationActionResult(
         request: ApplicationLaunchRequest) async throws -> DesktopActionResult<ServiceApplicationInfo>
     {
-        let access: DesktopOperationAccess = request.activates ? .write : .read
+        // Only the exact already-running background check is read-only; a cold background launch dispatches.
+        let access: DesktopOperationAccess = request.isSafeBackgroundNoOp ? .read : .write
         return try await self.operationLaneCoordinator.run(scope: .global, access: access) {
             let preparedLaunch = try self.prepareApplicationLaunch(request)
             return try await self.performApplicationLaunchWithOutcomeOwnedLane(preparedLaunch)
