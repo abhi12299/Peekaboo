@@ -6,8 +6,9 @@ import PeekabooFoundation
 import Testing
 @testable import PeekabooAutomationKit
 
-/// Single left positional clicks use accessibility actions. Pixel right- and double-clicks use
-/// exact-window routed events and are covered separately by `WindowRoutedPointerDriverTests`.
+/// Single left positional clicks prefer accessibility actions. Window-routed clicks (nothing pressable,
+/// or pixel right-/double-clicks) are covered by `BackgroundPositionalClickRouterTests` and
+/// `WindowRoutedPointerDriverTests`.
 struct BackgroundInputDriverPositionalTargetTests {
     @Test(arguments: [BackgroundInputDriver.PositionalClickAction.focus, .select], [false, true])
     @MainActor
@@ -425,21 +426,6 @@ struct BackgroundInputDriverPositionalTargetTests {
     }
 
     @Test
-    func `unactionable point error names the foreground escape hatch and reads as point-specific`() {
-        let message = BackgroundInputDriver.noActionableElementMessage(
-            at: CGPoint(x: 2396, y: 162),
-            targetProcessIdentifier: 92941)
-        #expect(message.contains("--foreground"))
-        #expect(message.contains("--input-strategy synthOnly"))
-        #expect(message.contains("(2396, 162)"))
-        #expect(message.contains("92941"))
-        // The message must describe the genuine "nothing pressable here" case, not claim that
-        // positional background clicking is impossible.
-        #expect(message.contains("pressable"))
-        #expect(!message.lowercased().contains("cannot be routed"))
-    }
-
-    @Test
     func `unproven route message points to foreground`() {
         #expect(BackgroundInputDriver.unprovenWindowRouteMessage.contains("--foreground"))
     }
@@ -489,7 +475,7 @@ struct BackgroundInputDriverPositionalTargetTests {
 }
 
 @MainActor
-private final class PositionalMockElement: AutomationElementRepresenting, @unchecked Sendable {
+final class PositionalMockElement: AutomationElementRepresenting, @unchecked Sendable {
     let name: String? = nil
     let label: String? = nil
     let roleDescription: String? = nil

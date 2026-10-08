@@ -15,8 +15,9 @@ enum FocusedTextKeyDispatch: Equatable {
 /// Background input that targets a process directly without focusing it or moving the cursor.
 ///
 /// Keyboard input is delivered as pid-routed CGEvents. Single left clicks prefer accessibility
-/// actions. Pixel right- and double-clicks use a PID/window-routed event sequence carrying an
-/// explicit window-local point; they never use the desktop-global event tap.
+/// actions; a point with nothing pressable, and pixel right-, double-, middle- and triple-clicks, use a
+/// PID/window-routed event sequence carrying an explicit window-local point (left clicks inside a
+/// `BackgroundFocusSession`). They never use the desktop-global event tap.
 enum BackgroundInputDriver {
     private static let logger = Logger(subsystem: "boo.peekaboo.core", category: "BackgroundInputDriver")
 
@@ -183,7 +184,7 @@ enum BackgroundInputDriver {
     /// exposes no window (or the lookup failed); for a pinned exact-window click that is treated as
     /// a mismatch so the click is never delivered to an unverified window.
     @MainActor
-    private static func assertBelongsToTargetWindow(
+    static func assertBelongsToTargetWindow(
         _ element: any AutomationElementRepresenting,
         targetWindowID: CGWindowID,
         at point: CGPoint) throws
@@ -199,7 +200,7 @@ enum BackgroundInputDriver {
     }
 
     @MainActor
-    private static func hitTestCandidates(
+    static func hitTestCandidates(
         at point: CGPoint,
         targetProcessIdentifier: pid_t) -> [any AutomationElementRepresenting]
     {
@@ -1553,16 +1554,6 @@ extension BackgroundInputDriver {
         "AXWindow",
     ]
 
-    static func noActionableElementMessage(at point: CGPoint, targetProcessIdentifier: pid_t) -> String {
-        """
-        No pressable accessibility element was found at (\(Int(point.x)), \(Int(point.y))) in \
-        PID \(targetProcessIdentifier). Background clicks press the accessibility element at the \
-        target point, and nothing pressable was found there — the point may be empty, a \
-        custom-drawn view, or an element that exposes no press action. Re-run with --foreground \
-        --input-strategy synthOnly to focus the app and send a real mouse click at these coordinates.
-        """
-    }
-
     static func occludedWindowMessage(at point: CGPoint, targetWindowID: CGWindowID) -> String {
         """
         Point (\(Int(point.x)), \(Int(point.y))) is occluded for the pinned target window \
@@ -1575,7 +1566,8 @@ extension BackgroundInputDriver {
 }
 
 extension BackgroundInputDriver {
-    /// Deliver a positional click to a background process via accessibility.
+    /// Deliver a positional click to one exact background window; `BackgroundPositionalClickRouter`
+    /// chooses between an accessibility action and window-routed pointer events.
     @MainActor
     @discardableResult
     static func click(
@@ -1615,47 +1607,14 @@ extension BackgroundInputDriver {
             }
         }
 
-        if count > 1 || button != .left {
-            guard let resolvedWindowID else {
-                throw PeekabooError.serviceUnavailable(self.unprovenWindowRouteMessage)
-            }
-            return try await WindowRoutedPointerDriver().click(
-                at: point,
-                button: button,
-                count: count,
-                targetProcessIdentifier: targetProcessIdentifier,
-                targetWindowID: resolvedWindowID,
-                expectedWindowIdentity: expectedWindowIdentity,
-                expectedWindowBounds: expectedWindowBounds)
+        guard resolvedWindowID != nil, let expectedWindowIdentity, let expectedWindowBounds else {
+            throw PeekabooError.serviceUnavailable(self.unprovenWindowRouteMessage)
         }
-        guard count == 1 else {
-            throw PeekabooError.invalidInput("Background click count must be between 1 and 3")
-        }
-        guard AXIsProcessTrusted() else {
-            throw PeekabooError.permissionDeniedAccessibility
-        }
-
-        let candidates = self.hitTestCandidates(at: point, targetProcessIdentifier: targetProcessIdentifier)
-        guard let resolved = Self.positionalClickTarget(inCandidates: candidates, at: point, button: button) else {
-            throw PeekabooError.serviceUnavailable(
-                Self.noActionableElementMessage(at: point, targetProcessIdentifier: targetProcessIdentifier))
-        }
-        if let targetWindowID {
-            guard let expectedWindowIdentity,
-                  let expectedWindowBounds,
-                  SystemIdentityResolver.validateWindowMutationIdentity(
-                      expectedWindowIdentity,
-                      expectedBounds: expectedWindowBounds)
-            else {
-                throw PeekabooError.snapshotStale(
-                    "Exact-window background pointer receipt changed before AX dispatch")
-            }
-            try self.assertBelongsToTargetWindow(resolved.element, targetWindowID: targetWindowID, at: point)
-        }
-
-        return try await self.performPositionalClickAction(
-            resolved.action,
-            on: resolved.element,
+        return try await BackgroundPositionalClickRouter().click(
+            at: point,
+            button: button,
+            count: count,
+            target: UIAutomationTarget.ExactWindow(identity: expectedWindowIdentity, bounds: expectedWindowBounds),
             allowsAccessibilityValueDelivery: allowsAccessibilityValueDelivery)
     }
 }
