@@ -97,6 +97,36 @@ struct DetachedAXObservationWorkerTests {
     }
 
     @Test
+    func `exact window on another Space resolves through the main window when AXWindows is empty`() {
+        let offSpace = AXWindowInventorySupplement<String>(
+            mainWindow: { "main" },
+            focusedWindow: { "main" },
+            remoteWindow: { _ in nil },
+            windowID: { $0 == "main" ? 42 : nil },
+            canContinue: { true },
+            readEnvironment: { _ in nil },
+            scanLimit: 0)
+
+        #expect(DetachedAXObservationWorker.resolveExactWindow(
+            windowID: 42,
+            windows: [],
+            candidates: [],
+            supplement: offSpace) == "main")
+        // Another window must never stand in for the requested one.
+        #expect(DetachedAXObservationWorker.resolveExactWindow(
+            windowID: 43,
+            windows: [],
+            candidates: [],
+            supplement: offSpace) == nil)
+        // A listed window keeps winning without supplement reads.
+        #expect(DetachedAXObservationWorker.resolveExactWindow(
+            windowID: 42,
+            windows: ["listed"],
+            candidates: [DetachedAXWindowIdentityCandidate(windowID: 42, bounds: nil)],
+            supplement: offSpace) == "listed")
+    }
+
+    @Test
     func `nonresponsive exact-window child resets timeout before probing next child`() {
         var events: [ExactWindowProbeEvent] = []
         var timeouts: [Float] = [0.2, 0.1]

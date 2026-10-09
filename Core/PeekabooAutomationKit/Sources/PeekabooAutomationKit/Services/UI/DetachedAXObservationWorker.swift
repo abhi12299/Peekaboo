@@ -214,6 +214,23 @@ enum DetachedAXObservationWorker {
         }
     }
 
+    /// `AXWindows` omits windows on a non-active Space, so an unlisted exact target is looked up
+    /// through the supplement, which only ever returns the window carrying that exact identifier.
+    static func resolveExactWindow<Window>(
+        windowID: Int,
+        windows: [Window],
+        candidates: [DetachedAXWindowIdentityCandidate],
+        supplement: AXWindowInventorySupplement<Window>) -> Window?
+    {
+        if let exactIndex = DetachedAXExactWindowSelectionPolicy.uniqueExactIndex(
+            windowID: windowID,
+            candidates: candidates)
+        {
+            return windows[exactIndex]
+        }
+        return supplement.window(matching: windowID, missingFrom: candidates.map(\.windowID))
+    }
+
     static func inspect(_ request: DetachedAXObservationRequest) throws -> DetachedAXObservationResult {
         try self.inspect(
             request,
@@ -481,11 +498,16 @@ enum DetachedAXObservationWorker {
                 remainingTimeout: { self.remainingMessagingTimeout(until: deadline) },
                 applyTimeout: { AXUIElementSetMessagingTimeout($0, $1) },
                 windowID: { AXWindowIDResolver.windowID(of: $0).map(Int.init) })
-            if let exactIndex = DetachedAXExactWindowSelectionPolicy.uniqueExactIndex(
+            if let window = self.resolveExactWindow(
                 windowID: Int(cgWindowID),
-                candidates: candidates)
+                windows: windows,
+                candidates: candidates,
+                supplement: .live(
+                    application: application,
+                    processIdentifier: request.processIdentifier,
+                    deadline: deadline))
             {
-                return windows[exactIndex]
+                return window
             }
             throw PeekabooError.windowNotFound(
                 criteria: "accessible window id \(requestedID) owned by PID \(request.processIdentifier)")

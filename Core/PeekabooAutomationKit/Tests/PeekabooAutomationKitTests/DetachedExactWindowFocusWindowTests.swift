@@ -62,6 +62,37 @@ struct DetachedExactWindowFocusWindowTests {
         #expect(reads == (empty ? 0 : 2))
     }
 
+    @Test
+    func `keyboard target on another Space resolves through the focused window when AXWindows is empty`() throws {
+        let identifiers: [(AXUIElement, Int)] = [(self.first, 7), (self.second, 42)]
+        func supplement(environment: [String: String] = [:]) -> AXWindowInventorySupplement<AXUIElement> {
+            AXWindowInventorySupplement(
+                mainWindow: { self.first },
+                focusedWindow: { self.second },
+                remoteWindow: { _ in nil },
+                windowID: { window in identifiers.first { CFEqual($0.0, window) }?.1 },
+                canContinue: { true },
+                readEnvironment: { environment[$0] },
+                scanLimit: 0)
+        }
+        func target(_ windowID: Int, _ supplement: AXWindowInventorySupplement<AXUIElement>)
+            -> Result<AXUIElement, FocusedElementReceiptError>
+        {
+            DetachedExactWindowFocusReader.targetWindow(
+                expectedWindowID: windowID,
+                inventory: .init(error: .success, value: []),
+                copyWindowID: { _, _ in .success },
+                supplement: supplement)
+        }
+
+        #expect(try CFEqual(target(42, supplement()).get(), self.second))
+        // A different window is never substituted, and the kill switch restores the old refusal.
+        #expect(throws: FocusedElementReceiptError.windowNotFound) { try target(43, supplement()).get() }
+        #expect(throws: FocusedElementReceiptError.windowNotFound) {
+            try target(42, supplement(environment: ["PEEKABOO_OFFSPACE_AX_WINDOWS": "0"])).get()
+        }
+    }
+
     @Test(arguments: [AXError.cannotComplete, .success])
     func `unresolved inventory identifiers are retained only when target is not found`(error: AXError) throws {
         for hasTarget in [false, true] {

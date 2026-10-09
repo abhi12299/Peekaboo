@@ -326,7 +326,13 @@ enum DetachedExactWindowFocusReader {
             copyWindowID: { element, windowID in
                 AXUIElementSetMessagingTimeout(element, self.messagingTimeout)
                 return AXWindowIDResolver.copyWindowID(element, into: &windowID)
-            })
+            },
+            supplement: .live(
+                application: application,
+                processIdentifier: expected.processIdentifier,
+                // Callers abandon this read after 0.2 s; leave most of that for the receiver search.
+                deadline: ContinuousClock.now.advanced(by: .milliseconds(80)),
+                messagingTimeout: self.messagingTimeout))
         {
         case let .success(value): window = value
         case let .failure(error): return .failure(error)
@@ -424,7 +430,8 @@ enum DetachedExactWindowFocusReader {
     static func targetWindow(
         expectedWindowID: Int,
         inventory: AXDescriptorReader.SingleAttributeRead?,
-        copyWindowID: (AXUIElement, inout CGWindowID) -> AXError)
+        copyWindowID: (AXUIElement, inout CGWindowID) -> AXError,
+        supplement: AXWindowInventorySupplement<AXUIElement>? = nil)
         -> Result<AXUIElement, FocusedElementReceiptError>
     {
         guard let inventory else { return .failure(.windowObservationFailed(stage: .inventory, errorCode: nil)) }
@@ -437,6 +444,7 @@ enum DetachedExactWindowFocusReader {
             return .failure(.windowObservationFailed(stage: .inventory, errorCode: nil))
         }
         var firstUnreadable: FocusedElementReceiptError?
+        var inventoryWindowIDs: [Int?] = []
         for value in values {
             let window = unsafeDowncast(value as CFTypeRef, to: AXUIElement.self)
             switch self.windowIdentifier(window, stage: .inventoryWindowID, copyWindowID: copyWindowID) {
@@ -444,11 +452,17 @@ enum DetachedExactWindowFocusReader {
                 if windowID == expectedWindowID {
                     return .success(window)
                 }
+                inventoryWindowIDs.append(windowID)
             case let .failure(error):
+                inventoryWindowIDs.append(nil)
                 if firstUnreadable == nil {
                     firstUnreadable = error
                 }
             }
+        }
+        // `AXWindows` omits windows on a non-active Space; the supplement only returns the exact target.
+        if let window = supplement?.window(matching: expectedWindowID, missingFrom: inventoryWindowIDs) {
+            return .success(window)
         }
         // An unreadable entry is not evidence that the requested window disappeared.
         return .failure(firstUnreadable ?? .windowNotFound)

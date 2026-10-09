@@ -144,46 +144,123 @@ enum DetachedAXWindowEnumerationWorker {
         }
         let focusedWindowID = focusedWindowIDRead.value
 
-        let limit = max(0, request.maximumWindowCount)
+        let inventory = self.describeWindows(
+            windows: windows,
+            maximumWindowCount: request.maximumWindowCount,
+            targetWindowIDs: self.windowServerWindowIDs(ownedBy: request.processIdentifier),
+            deadlineReached: { ContinuousClock.now >= deadline },
+            readDescriptor: {
+                self.readDescriptor(
+                    $0,
+                    expectedProcessIdentifier: request.processIdentifier,
+                    deadline: deadline)
+            },
+            supplement: .live(
+                application: application,
+                processIdentifier: request.processIdentifier,
+                deadline: deadline))
+        try self.validateIdentity(request)
+        // `reportedWindowCount` is the raw AXWindows count plus any exact off-Space windows found
+        // outside it. This worker does not apply renderability filtering: every successfully read row
+        // produces a descriptor, and any deadline, read, owner, or maximum-count shortfall sets
+        // `incomplete`.
+        return DetachedAXWindowEnumerationResult(
+            descriptors: inventory.descriptors,
+            focusedWindowID: focusedWindowID,
+            timedOut: inventory.timedOut,
+            incomplete: inventory.incomplete || focusedWindowRead.incomplete || focusedWindowIDRead.incomplete,
+            reportedWindowCount: inventory.reportedWindowCount)
+    }
+
+    /// Reads one descriptor per listed window, then per WindowServer window that `AXWindows` left out
+    /// (macOS omits windows on a non-active Space) and the supplement can name by exact identifier.
+    static func describeWindows<Window>(
+        windows: [Window],
+        maximumWindowCount: Int,
+        targetWindowIDs: Set<Int>,
+        deadlineReached: () -> Bool,
+        readDescriptor: (Window) -> DescriptorRead?,
+        supplement: AXWindowInventorySupplement<Window>) -> WindowInventoryRead
+    {
+        let limit = max(0, maximumWindowCount)
         var descriptors: [DetachedAXWindowDescriptor] = []
         descriptors.reserveCapacity(min(windows.count, limit))
-        var incomplete = focusedWindowRead.incomplete || focusedWindowIDRead.incomplete
+        var incomplete = windows.count > limit
         var timedOut = false
+        var reportedWindowCount = windows.count
 
-        for window in windows.prefix(limit) {
-            guard ContinuousClock.now < deadline else {
+        func describe(_ window: Window, expectedWindowID: Int? = nil) -> Bool {
+            guard !deadlineReached() else {
                 timedOut = true
-                break
+                return false
             }
-            guard let read = self.readDescriptor(
-                window,
-                expectedProcessIdentifier: request.processIdentifier,
-                deadline: deadline)
+            guard let read = readDescriptor(window),
+                  expectedWindowID == nil || read.descriptor.windowID == expectedWindowID
             else {
                 incomplete = true
-                if ContinuousClock.now >= deadline {
+                if deadlineReached() {
                     timedOut = true
-                    break
+                    return false
                 }
-                continue
+                return true
             }
             descriptors.append(read.descriptor)
             incomplete = incomplete || read.incomplete
+            return true
         }
 
-        if windows.count > limit {
+        for window in windows.prefix(limit) {
+            guard describe(window) else { break }
+        }
+        guard !timedOut, descriptors.count < limit else {
+            return WindowInventoryRead(
+                descriptors: descriptors,
+                incomplete: incomplete,
+                timedOut: timedOut,
+                reportedWindowCount: reportedWindowCount)
+        }
+
+        let offSpaceWindows = supplement.windows(
+            matching: targetWindowIDs,
+            missingFrom: descriptors.map(\.windowID))
+        reportedWindowCount += offSpaceWindows.count
+        if descriptors.count + offSpaceWindows.count > limit {
             incomplete = true
         }
-        try self.validateIdentity(request)
-        // `reportedWindowCount` is the raw AXWindows count. This worker does not apply
-        // renderability filtering: every successfully read row produces a descriptor, and any
-        // deadline, read, owner, or maximum-count shortfall sets `incomplete` above.
-        return DetachedAXWindowEnumerationResult(
+        for match in offSpaceWindows.prefix(limit - descriptors.count) {
+            guard describe(match.window, expectedWindowID: match.windowID) else { break }
+        }
+        return WindowInventoryRead(
             descriptors: descriptors,
-            focusedWindowID: focusedWindowID,
-            timedOut: timedOut,
             incomplete: incomplete,
-            reportedWindowCount: windows.count)
+            timedOut: timedOut,
+            reportedWindowCount: reportedWindowCount)
+    }
+
+    /// Ordinary application windows WindowServer attributes to the process, on any Space. Small and
+    /// non-zero-layer surfaces are skipped: they are never observation targets and rarely AX windows.
+    private static func windowServerWindowIDs(ownedBy processIdentifier: pid_t) -> Set<Int> {
+        guard OffSpaceAXWindowSwitch.isEnabled(),
+              let rows = CGWindowListCopyWindowInfo(
+                  [.optionAll, .excludeDesktopElements],
+                  kCGNullWindowID) as? [[String: Any]]
+        else {
+            return []
+        }
+        var windowIDs = Set<Int>()
+        for row in rows {
+            guard row[kCGWindowOwnerPID as String] as? pid_t == processIdentifier,
+                  row[kCGWindowLayer as String] as? Int == 0,
+                  let windowID = row[kCGWindowNumber as String] as? Int,
+                  let bounds = row[kCGWindowBounds as String] as? [String: Any],
+                  let width = bounds["Width"] as? CGFloat, width >= 50,
+                  let height = bounds["Height"] as? CGFloat, height >= 50
+            else {
+                continue
+            }
+            windowIDs.insert(windowID)
+        }
+        return windowIDs
     }
 
     static func validateIdentity(
@@ -342,9 +419,16 @@ enum DetachedAXWindowEnumerationWorker {
         }
     }
 
-    private struct DescriptorRead {
+    struct DescriptorRead {
         let descriptor: DetachedAXWindowDescriptor
         let incomplete: Bool
+    }
+
+    struct WindowInventoryRead {
+        let descriptors: [DetachedAXWindowDescriptor]
+        let incomplete: Bool
+        let timedOut: Bool
+        let reportedWindowCount: Int
     }
 
     private struct ValueRead<Value> {

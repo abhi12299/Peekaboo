@@ -381,6 +381,67 @@ struct DetachedAXWindowEnumerationCoordinatorTests {
     }
 
     @Test
+    func `window on another Space is enumerated through the main window when AXWindows is empty`() {
+        func descriptor(_ windowID: Int) -> DetachedAXWindowEnumerationWorker.DescriptorRead {
+            DetachedAXWindowEnumerationWorker.DescriptorRead(
+                descriptor: DetachedAXWindowDescriptor(
+                    windowID: windowID,
+                    title: "Window \(windowID)",
+                    bounds: CGRect(x: 0, y: 0, width: 300, height: 200)),
+                incomplete: false)
+        }
+        var supplementReads = 0
+        let offSpace = AXWindowInventorySupplement<Int>(
+            mainWindow: {
+                supplementReads += 1
+                return 42
+            },
+            focusedWindow: { 42 },
+            remoteWindow: { _ in nil },
+            windowID: { $0 },
+            canContinue: { true },
+            readEnvironment: { _ in nil },
+            scanLimit: 0)
+
+        let recovered = DetachedAXWindowEnumerationWorker.describeWindows(
+            windows: [],
+            maximumWindowCount: 100,
+            targetWindowIDs: [42],
+            deadlineReached: { false },
+            readDescriptor: descriptor,
+            supplement: offSpace)
+        #expect(recovered.descriptors.map(\.windowID) == [42])
+        #expect(recovered.reportedWindowCount == 1)
+        #expect(!recovered.incomplete)
+        #expect(!recovered.timedOut)
+
+        // A complete inventory is returned untouched, without supplement reads.
+        supplementReads = 0
+        let listed = DetachedAXWindowEnumerationWorker.describeWindows(
+            windows: [42, 7],
+            maximumWindowCount: 100,
+            targetWindowIDs: [42],
+            deadlineReached: { false },
+            readDescriptor: descriptor,
+            supplement: offSpace)
+        #expect(listed.descriptors.map(\.windowID) == [42, 7])
+        #expect(listed.reportedWindowCount == 2)
+        #expect(supplementReads == 0)
+
+        // A WindowServer window with no exact AX counterpart stays unmatched, as before.
+        let unmatched = DetachedAXWindowEnumerationWorker.describeWindows(
+            windows: [],
+            maximumWindowCount: 100,
+            targetWindowIDs: [43],
+            deadlineReached: { false },
+            readDescriptor: descriptor,
+            supplement: offSpace)
+        #expect(unmatched.descriptors.isEmpty)
+        #expect(unmatched.reportedWindowCount == 0)
+        #expect(!unmatched.incomplete)
+    }
+
+    @Test
     func `noncooperative AX work hard-times out without blocking caller`() async throws {
         let gate = EnumerationBlockingGate()
         let startedAt = ContinuousClock.now
