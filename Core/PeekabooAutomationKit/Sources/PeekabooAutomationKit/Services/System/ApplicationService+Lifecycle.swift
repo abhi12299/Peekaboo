@@ -48,7 +48,13 @@ extension ApplicationService {
         }
 
         let requestedRunningApplication = try identifier.flatMap(self.resolveRequestedRunningApplication)
-        if requestedRunningApplication != nil, request.createsNewInstance || !request.openURLs.isEmpty {
+        // A background document open may be pinned to a running process; every other PID selector shape with
+        // open targets or a new instance stays refused.
+        let isBackgroundDocumentOpen = !request.activates && request.allowsColdBackgroundLaunch &&
+            !request.createsNewInstance
+        if requestedRunningApplication != nil,
+           request.createsNewInstance || (!request.openURLs.isEmpty && !isBackgroundDocumentOpen)
+        {
             throw PeekabooError.invalidInput(
                 "A PID launch selector cannot be combined with open targets or --new-instance; " +
                     "use an app path or bundle ID")
@@ -87,6 +93,9 @@ extension ApplicationService {
         if !launch.activates {
             if let applicationURL = self.coldBackgroundLaunchURL(launch) {
                 return try await self.performColdBackgroundLaunch(launch, applicationURL: applicationURL)
+            }
+            if let applicationURL = self.backgroundDocumentOpenURL(launch) {
+                return try await self.performBackgroundDocumentOpen(launch, applicationURL: applicationURL)
             }
             let application = try await self.performVerifiedBackgroundLaunchNoOp(launch)
             let boundApplication = try await self.bindSelectorResolution(application, launch: launch)

@@ -178,6 +178,8 @@ struct MCPToolExecutionPolicyTests {
             .init(tool: "capture", arguments: [:]),
             .init(tool: "capture", arguments: ["capture_focus": "background"]),
             .init(tool: "app", arguments: ["action": "launch", "foreground": false]),
+            .init(tool: "app", arguments: ["action": "launch", "name": "TextEdit", "open": "/tmp/notes.txt"]),
+            .init(tool: "app", arguments: ["action": "launch", "name": "TextEdit", "open": ["/tmp/notes.txt"]]),
             .init(tool: "window", arguments: ["action": "set-bounds"]),
             .init(tool: "menu", arguments: ["action": "click", "foreground": false]),
             .init(tool: "dialog", arguments: ["action": "list", "foreground": false]),

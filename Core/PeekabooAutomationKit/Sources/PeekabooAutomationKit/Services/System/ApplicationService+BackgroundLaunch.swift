@@ -2,6 +2,31 @@ import AppKit
 import Foundation
 import PeekabooFoundation
 
+/// Only existing local documents are delivered to an application without activation. Web and custom-scheme
+/// URLs can make the receiving app (or a browser) activate, and a plain directory is not a document. Document
+/// packages such as `.rtfd` are directories on disk and stay allowed.
+public enum BackgroundDocumentOpenPolicy {
+    /// Throws before any dispatch, naming the first unusable target.
+    public static func validate(_ urls: [URL]) throws {
+        for url in urls {
+            guard url.isFileURL else {
+                throw ApplicationLifecycleRefusalError.backgroundLaunch(
+                    "Background delivery of \(url.absoluteString) is refused before dispatch: only existing " +
+                        "local files can be opened without activating the app.")
+            }
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
+                throw PeekabooError.invalidInput("Document to open does not exist: \(url.path)")
+            }
+            if isDirectory.boolValue,
+               (try? url.resourceValues(forKeys: [.isPackageKey]))?.isPackage != true
+            {
+                throw PeekabooError.invalidInput("Document to open is a directory, not a file: \(url.path)")
+            }
+        }
+    }
+}
+
 @MainActor
 extension ApplicationService {
     /// The application URL to cold-launch in the background, or nil when the request must take the
@@ -22,6 +47,42 @@ extension ApplicationService {
         return isRunning ? nil : applicationURL
     }
 
+    /// The application URL that should receive the request's documents without activation, or nil when the
+    /// request is not a background document open. Unlike the plain cold launch this also applies when the
+    /// application is already running: the documents are delivered to the running instance.
+    func backgroundDocumentOpenURL(_ launch: PreparedApplicationLaunch) -> URL? {
+        guard launch.allowsColdBackgroundLaunch,
+              !launch.activates,
+              !launch.openURLs.isEmpty,
+              !launch.createsNewInstance
+        else {
+            return nil
+        }
+        return launch.applicationURL
+    }
+
+    /// Deliver the request's documents to the application without activating it. A PID-selected request is
+    /// pinned to that process generation: it is refused before dispatch when the process is gone, and fails
+    /// after dispatch when LaunchServices delivered to another process.
+    func performBackgroundDocumentOpen(
+        _ launch: PreparedApplicationLaunch,
+        applicationURL: URL) async throws -> DesktopActionResult<ServiceApplicationInfo>
+    {
+        try BackgroundDocumentOpenPolicy.validate(launch.openURLs)
+        if let requestedIdentity = launch.requestedRunningApplicationIdentity {
+            let runningApplications = self.runningApplicationsForURLProvider(applicationURL).filter { application in
+                !application.isTerminated && Self.application(application, matches: applicationURL)
+            }
+            guard self.selectRunningApplication(runningApplications, requestedIdentity: requestedIdentity) != nil
+            else {
+                throw ApplicationLifecycleRefusalError.backgroundLaunch(
+                    "The PID-selected application stopped or changed process generation before its documents " +
+                        "were opened.")
+            }
+        }
+        return try await self.performColdBackgroundLaunch(launch, applicationURL: applicationURL)
+    }
+
     func performColdBackgroundLaunch(
         _ launch: PreparedApplicationLaunch,
         applicationURL: URL) async throws -> DesktopActionResult<ServiceApplicationInfo>
@@ -39,7 +100,7 @@ extension ApplicationService {
         let openTask = Task { @MainActor in
             try Task.checkCancellation()
             self.logger.debug("Launching app in the background from URL: \(applicationURL.path)")
-            return try await self.applicationOpenHandler(applicationURL, [], config)
+            return try await self.applicationOpenHandler(applicationURL, launch.openURLs, config)
         }
         let runningApp: NSRunningApplication
         do {
@@ -54,6 +115,12 @@ extension ApplicationService {
         var acceptedNativeDispatchCount = 1
         do {
             let launchProcessIdentity = try self.captureLaunchProcessIdentity(runningApp)
+            if let requestedIdentity = launch.requestedRunningApplicationIdentity,
+               launchProcessIdentity != requestedIdentity
+            {
+                throw PeekabooError.commandFailed(
+                    "LaunchServices delivered the documents to a different process than the PID-selected application")
+            }
             try await self.waitUntilReadyIfNeeded(
                 runningApp,
                 requested: launch.waitUntilReady,

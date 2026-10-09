@@ -143,6 +143,7 @@ extension MCPToolContext {
     /// A background `app launch` of an application that is not running has no process to pin. It is admitted
     /// without a target plan so the application service can cold-launch it without activation; the service
     /// re-checks the running state and falls back to the exact no-op if the app started in the meantime.
+    /// The same holds for a launch that delivers documents (`open`) to an app that is not running.
     @MainActor
     func backgroundColdApplicationLaunchAuthorization(
         toolName: String,
@@ -150,7 +151,8 @@ extension MCPToolContext {
         schema: BackgroundApplicationTargetSchema) async throws -> BackgroundTargetAuthorization?
     {
         guard toolName == "app",
-              MCPToolRequestSemantics.isSafeBackgroundApplicationLaunchNoOp(arguments)
+              MCPToolRequestSemantics.isSafeBackgroundApplicationLaunchNoOp(arguments) ||
+              MCPToolRequestSemantics.isBackgroundApplicationDocumentOpen(arguments)
         else { return nil }
         let identifiers = try Self.applicationIdentifiers(arguments: arguments, schema: schema)
         guard identifiers.count == 1,

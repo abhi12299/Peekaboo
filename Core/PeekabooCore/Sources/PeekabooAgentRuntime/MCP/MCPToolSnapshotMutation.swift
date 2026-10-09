@@ -32,7 +32,18 @@ enum MCPToolRequestSemantics {
         self.normalized(arguments.getString("action")) == "launch" &&
             self.isFalseOrAbsent(arguments, key: "foreground") &&
             self.isFalseOrAbsent(arguments, key: "newInstance") &&
-            self.isAbsentOrEmptyStringArray(arguments, key: "openTargets")
+            self.isAbsentOrEmptyStringArray(arguments, key: "openTargets") &&
+            arguments.getValue(for: "open") == nil
+    }
+
+    /// A background `launch` that also delivers documents (`open`). It dispatches even when the app is already
+    /// running, so it is never the read-only no-op shape.
+    static func isBackgroundApplicationDocumentOpen(_ arguments: ToolArguments) -> Bool {
+        self.normalized(arguments.getString("action")) == "launch" &&
+            self.isFalseOrAbsent(arguments, key: "foreground") &&
+            self.isFalseOrAbsent(arguments, key: "newInstance") &&
+            self.isAbsentOrEmptyStringArray(arguments, key: "openTargets") &&
+            arguments.getValue(for: "open") != nil
     }
 
     private static func isFalseOrAbsent(_ arguments: ToolArguments, key: String) -> Bool {

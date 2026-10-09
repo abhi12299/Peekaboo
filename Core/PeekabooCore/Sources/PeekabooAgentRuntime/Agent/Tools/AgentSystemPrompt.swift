@@ -349,15 +349,18 @@ public struct AgentSystemPrompt {
             guidance.append("Use `app` with `{ \"action\": \"list\" }` to check whether the app is running.")
             guidance.append(allowsForeground ? """
             Work in the background by default. An app launch with `foreground: false` starts a non-running app in the
-            background without activating it and is an exact no-op when the app is already running. URL/document open,
+            background without activating it and is an exact no-op when the app is already running. Add
+            `"open": "/absolute/path"` to a background launch to open local documents in the app without activating
+            it, running or not, then list its windows to find the new one. URL open,
             new-instance, relaunch, and unhide require `foreground: true` because macOS cannot guarantee they preserve
             the user's foreground work. For example:
             `{ "action": "launch", "name": "Safari", "foreground": true, "waitUntilReady": true }`.
             """ : """
             `{ "action": "launch", "name": "Safari", "waitUntilReady": true }`
             starts a non-running app in the background without activating it and is an exact readiness check when the
-            app is already running. URL/document open, new-instance, relaunch, unhide,
-            focus, and switch are unavailable in this session.
+            app is already running. Add `"open": "/absolute/path"` to open local documents in the app without
+            activating it, running or not, then list its windows to find the new one. URL open, new-instance,
+            relaunch, unhide, focus, and switch are unavailable in this session.
             """)
         }
         if catalog.contains("window") {

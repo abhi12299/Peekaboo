@@ -11,7 +11,8 @@ public struct ApplicationLaunchRequest: Sendable, Codable, Equatable {
     public let waitForWindow: Bool
     public let createsNewInstance: Bool
     /// A non-activating launch may start an application that is not running. LaunchServices opens it without
-    /// activation and the service hands the foreground back if the new process takes it anyway.
+    /// activation and the service hands the foreground back if the new process takes it anyway. With local
+    /// document `openURLs` the same non-activating open delivers them to the app, running or not.
     public let allowsColdBackgroundLaunch: Bool
 
     public init(

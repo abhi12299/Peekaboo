@@ -15,13 +15,26 @@ extension AppToolActions {
         }
         if !request.foreground, !request.openTargets.isEmpty {
             throw ApplicationLifecycleRefusalError.backgroundLaunch(
-                "Background URL or document delivery is refused before dispatch because the target app can activate.")
+                "Background URL or document delivery is refused before dispatch because the target app can " +
+                    "activate. Pass local files in 'open' to open them without activation.")
         }
         guard request.bundleId != nil || request.name != nil else {
             return ToolResponse.error("Must specify either 'name' or 'bundleId' for launch action")
         }
 
-        let openURLs = try request.openTargets.map(Self.resolveOpenTarget)
+        // `open` documents are checked here so a bad path is refused before any service call; the service
+        // repeats the check next to the dispatch.
+        let documentURLs: [URL]
+        do {
+            documentURLs = try request.openDocuments.map(Self.resolveOpenDocument)
+            try BackgroundDocumentOpenPolicy.validate(documentURLs)
+        } catch {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .invalidRequest,
+                message: "Failed to launch application: \(error.localizedDescription)",
+                hint: "Pass existing local files as absolute paths in 'open'.")
+        }
+        let openURLs = try request.openTargets.map(Self.resolveOpenTarget) + documentURLs
         let launchRequest = ApplicationLaunchRequest(
             applicationIdentifier: request.bundleId == nil ? request.name : nil,
             applicationBundleIdentifier: request.bundleId,
@@ -40,7 +53,12 @@ extension AppToolActions {
         let timing = self.executionTimeString(since: request.startTime)
         // A legacy service without canonical outcomes cannot cold-launch in the background, so its successful
         // background launch is still the already-running no-op.
-        let message = if outcome?.state == .confirmedNoChange ||
+        let message = if !documentURLs.isEmpty, outcome?.state != .confirmedNoChange {
+            "\(AgentDisplayTokens.Status.success) Opened \(documentURLs.map(\.path).joined(separator: ", ")) "
+                + "in \(app.name) (PID: \(app.processIdentifier))"
+                + (request.foreground ? "" : " without activating it")
+                + " in \(timing). Use `window list` or `see` on \(app.name) to find the new window."
+        } else if outcome?.state == .confirmedNoChange ||
             (outcome == nil && !launchRequest.activates)
         {
             "\(AgentDisplayTokens.Status.success) \(app.name) was already running "
@@ -56,6 +74,7 @@ extension AppToolActions {
             extraMeta: [
                 "foreground": .bool(request.foreground),
                 "open_targets": .array(request.openTargets.map(Value.string)),
+                "opened_documents": .array(documentURLs.map { .string($0.path) }),
                 "wait_until_ready": .bool(request.waitUntilReady),
                 "wait_for_window": .bool(request.waitForWindow),
                 "new_instance": .bool(request.newInstance),
@@ -72,9 +91,9 @@ extension AppToolActions {
         request: ApplicationLaunchRequest) throws -> DesktopActionOutcome?
     {
         // A background launch authorized against an already-running process is pinned to that PID and can only
-        // be an exact no-op. Without an authorized running target it may be a cold background launch.
+        // be an exact no-op, unless it delivers documents to that process. Without an authorized running target
+        // it may be a cold background launch.
         guard !request.activates,
-              request.openURLs.isEmpty,
               !request.createsNewInstance,
               let context,
               let authorization = AuthorizedDesktopTargetPlan.current
@@ -91,6 +110,8 @@ extension AppToolActions {
         _ = try context.coalesceAuthorizedDesktopTarget(
             DesktopTargetIdentity(processIdentity: returnedIdentity),
             operation: "Background application readiness")
+        // Document delivery to the pinned process is a dispatched background mutation, not a no-op.
+        guard request.openURLs.isEmpty else { return result.outcome }
 
         guard let outcome = result.outcome else {
             throw DesktopActionFailure.indeterminate(
@@ -558,6 +579,26 @@ extension AppToolActions {
             ? expanded
             : NSString(string: FileManager.default.currentDirectoryPath).appendingPathComponent(expanded)
         return URL(fileURLWithPath: path)
+    }
+
+    /// `open` takes local documents only: an absolute path (after `~` expansion) or a `file:` URL.
+    private static func resolveOpenDocument(_ value: String) throws -> URL {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            throw PeekabooError.invalidInput("'open' path must not be empty")
+        }
+        let expanded = NSString(string: trimmed).expandingTildeInPath
+        if expanded.hasPrefix("/") {
+            return URL(fileURLWithPath: expanded)
+        }
+        if let url = URL(string: trimmed), let scheme = url.scheme, !scheme.isEmpty {
+            guard url.isFileURL else {
+                throw PeekabooError.invalidInput(
+                    "'open' only takes local file paths; \(trimmed) is a URL and is not opened in the background")
+            }
+            return url
+        }
+        throw PeekabooError.invalidInput("'open' needs an absolute file path, got: \(trimmed)")
     }
 
     private static func validateExclusiveApplicationSelectors(_ request: AppToolRequest) throws {

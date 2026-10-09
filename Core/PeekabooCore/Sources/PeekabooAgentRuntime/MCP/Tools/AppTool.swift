@@ -18,8 +18,9 @@ public struct AppTool: MCPTool {
             Control applications under immutable background-only authority. Available actions are `list`, `quit`,
             `hide`, and `launch`; background `launch` starts an app that is not running without activating it (if the
             app takes the foreground anyway, the previously frontmost app is re-activated) and is an exact no-op when
-            the app is already running. Focus, switch, open, relaunch, unhide, new-instance, and `foreground=true` are
-            unavailable here because they can activate shared desktop UI. A human must start a
+            the app is already running. `launch` with `open` also opens local documents in the app, running or not,
+            without activating it. Focus, switch, the `open` action, relaunch, unhide, new-instance, and
+            `foreground=true` are unavailable here because they can activate shared desktop UI. A human must start a
             foreground-capable Agent session or use the standalone CLI with explicit foreground consent for those
             operations.
 
@@ -29,6 +30,8 @@ public struct AppTool: MCPTool {
             Always include the `action` field in your JSON payload. Examples:
             - { "action": "list" }
             - Background launch without activation: { "action": "launch", "name": "Finder" }
+            - Open a document without activation (app running or not), then find its window with `window list`
+              or `see`: { "action": "launch", "name": "TextEdit", "open": "/Users/me/notes.txt" }
             - { "action": "quit", "name": "Slack", "force": false }
             """
         }
@@ -44,6 +47,7 @@ public struct AppTool: MCPTool {
         Always include the `action` field in your JSON payload. Examples:
         - Already-running readiness probe: { "action": "launch", "name": "PID:1234" }
         - Background launch without activation: { "action": "launch", "name": "Calendar" }
+        - Open a document without activation: { "action": "launch", "name": "TextEdit", "open": "/Users/me/notes.txt" }
         - Foreground launch: { "action": "launch", "name": "Calendar", "foreground": true }
         - { "action": "launch", "name": "TextEdit", "newInstance": true, "foreground": true }
         - { "action": "open", "name": "Safari", "openTargets": ["https://example.com"], "foreground": true }
@@ -82,6 +86,15 @@ public struct AppTool: MCPTool {
                 default: false),
             "except": SchemaBuilder.string(
                 description: "Comma-separated list of apps to exclude when quitting all"),
+            "open": .object([
+                "anyOf": .array([
+                    SchemaBuilder.string(),
+                    SchemaBuilder.array(items: SchemaBuilder.string()),
+                ]),
+                "description": .string(
+                    "launch only: absolute file path(s) to open in the app without activating it; " +
+                        "also works when the app is already running"),
+            ]),
         ]
         if foregroundCapable {
             properties["openTargets"] = SchemaBuilder.array(
@@ -117,10 +130,16 @@ public struct AppTool: MCPTool {
             return ToolResponse.error("Missing required parameter: action")
         }
 
+        guard let openDocuments = Self.openDocuments(arguments) else {
+            return MCPToolResponseMetadataProjector.preDispatchRefusalResponse(
+                message: "Parameter 'open' must be a file path or an array of file paths",
+                reason: .invalidRequest)
+        }
         let request = AppToolRequest(
             name: arguments.getString("name"),
             bundleId: arguments.getString("bundleId"),
             openTargets: arguments.getStringArray("openTargets") ?? [],
+            openDocuments: openDocuments,
             foreground: arguments.getBool("foreground") ?? false,
             force: arguments.getBool("force") ?? false,
             wait: arguments.getNumber("wait") ?? 2.0,
@@ -180,10 +199,29 @@ public struct AppTool: MCPTool {
 
 // MARK: - Request & Helpers
 
+extension AppTool {
+    /// `open` accepts one path or an array of paths; nil means the value has another shape.
+    fileprivate static func openDocuments(_ arguments: ToolArguments) -> [String]? {
+        switch arguments.getValue(for: "open") {
+        case nil:
+            return []
+        case let .string(path)?:
+            return [path]
+        case let .array(values)?:
+            let paths = values.compactMap(\.stringValue)
+            return paths.count == values.count ? paths : nil
+        default:
+            return nil
+        }
+    }
+}
+
 struct AppToolRequest {
     let name: String?
     let bundleId: String?
     let openTargets: [String]
+    /// Local documents for `launch` to deliver to the app (`open`); allowed without foreground consent.
+    var openDocuments: [String] = []
     let foreground: Bool
     let force: Bool
     let wait: Double
