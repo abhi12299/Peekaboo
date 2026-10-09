@@ -994,7 +994,7 @@ extension MCPToolContext {
             try Task.checkCancellation()
             return refused(self.executionPolicy.unresolvedTargetRejection(
                 toolName: toolName,
-                detail: "the tool and automation snapshots disagree about target ownership"))
+                detail: "the tool and automation snapshots disagree about target ownership (\(error))"))
         }
         // The in-process implicit latest is session-owned. The authoritative store may be shared by
         // multiple local or Bridge clients, so its process-wide latest pointer is not evidence about
