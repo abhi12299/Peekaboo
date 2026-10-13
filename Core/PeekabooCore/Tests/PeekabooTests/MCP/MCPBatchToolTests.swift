@@ -243,6 +243,98 @@ struct MCPBatchToolTests {
     }
 
     @Test
+    func `unverified steps without observe_after observe the batch snapshot window in the same call`() async throws {
+        let fixture = try await MCPSnapshotMutationTestFixture.make()
+        let log = BatchProbeLog()
+        let batch = BatchTool(context: fixture.context, stepTools: Self.probes(log, [
+            "click": try Self.unverifiedClick,
+            "see": ToolResponse.text("observed"),
+        ]))
+
+        let response = try await fixture.context.execute(tool: batch, arguments: ToolArguments(raw: [
+            "snapshot": fixture.snapshotID,
+            "steps": [["tool": "click", "args": ["label": "a"]]],
+        ]))
+
+        #expect(!response.isError, "\(Self.text(response))")
+        #expect(log.calls == ["click:a", "see:"])
+        #expect(log.arguments.last?.getInt("window_id") == 42)
+        let text = Self.text(response)
+        #expect(text.contains("1 step was delivered but unverified; the observation below verifies them"))
+        #expect(text.hasSuffix("observed"))
+    }
+
+    @Test
+    func `a failed automatic observation is appended without failing the steps that ran`() async throws {
+        let fixture = try await MCPSnapshotMutationTestFixture.make()
+        let log = BatchProbeLog()
+        let batch = BatchTool(context: fixture.context, stepTools: Self.probes(log, [
+            "click": try Self.unverifiedClick,
+            "see": ToolResponse.error("Failed to capture UI state"),
+        ]))
+
+        let response = try await fixture.context.execute(tool: batch, arguments: ToolArguments(raw: [
+            "snapshot": fixture.snapshotID,
+            "steps": [["tool": "click", "args": ["label": "a"]]],
+        ]))
+
+        #expect(!response.isError, "\(Self.text(response))")
+        #expect(log.calls == ["click:a", "see:"])
+        let text = Self.text(response)
+        #expect(text.contains("Ran all 1 steps"))
+        #expect(text.contains("Failed to capture UI state"))
+    }
+
+    @Test
+    func `observe_after false turns off the automatic observation`() async throws {
+        let fixture = try await MCPSnapshotMutationTestFixture.make()
+        let log = BatchProbeLog()
+        let batch = BatchTool(context: fixture.context, stepTools: Self.probes(log, [
+            "click": try Self.unverifiedClick,
+            "see": ToolResponse.text("observed"),
+        ]))
+
+        let response = try await fixture.context.execute(tool: batch, arguments: ToolArguments(raw: [
+            "snapshot": fixture.snapshotID,
+            "steps": [["tool": "click", "args": ["label": "a"]]],
+            "observe_after": false,
+        ]))
+
+        #expect(!response.isError, "\(Self.text(response))")
+        #expect(log.calls == ["click:a"])
+        #expect(Self.text(response).contains("1 step was delivered but unverified"))
+    }
+
+    @Test
+    func `unverified steps with no known window say how to verify in the same call`() async throws {
+        let log = BatchProbeLog()
+        let context = await MCPToolTestHelpers.makeContext(executionPolicy: .unrestricted)
+        let batch = BatchTool(context: context, stepTools: Self.probes(log, [
+            "click": try Self.unverifiedClick,
+            "see": ToolResponse.text("observed"),
+        ]))
+
+        let response = try await context.execute(tool: batch, arguments: ToolArguments(raw: [
+            "steps": [["tool": "click", "args": ["label": "a"]]],
+        ]))
+
+        #expect(!response.isError)
+        #expect(log.calls == ["click:a"])
+        #expect(Self.text(response).contains(
+            "pass observe_after (true with a batch snapshot, or `see` arguments such as " +
+                "{\"app_target\": \"Calculator\"}) to verify in the same call"))
+    }
+
+    @Test
+    func `the description says unverified steps are observed in the same call unless observe_after is false`() async {
+        let context = await MCPToolTestHelpers.makeContext(executionPolicy: .unrestricted)
+        let description = BatchTool(context: context).description
+
+        #expect(description.contains("When `observe_after` is omitted and a step is unverified"))
+        #expect(description.contains("`observe_after: false` turns this off"))
+    }
+
+    @Test
     func `batch is in the MCP catalog and PEEKABOO_DISABLE_TOOLS removes it`() async {
         let context = await MCPToolTestHelpers.makeContext()
 
@@ -280,6 +372,18 @@ struct MCPBatchToolTests {
     }
 
     // MARK: - Helpers
+
+    private static var unverifiedClick: ToolResponse {
+        get throws {
+            try ToolResponse(
+                content: [.text(text: "[ok] Dispatched click; delivery is unverified", annotations: nil, _meta: nil)],
+                meta: MCPToolResponseMetadataProjector.metadata(
+                    merging: [:],
+                    outcome: .dispatchedUnverified(
+                        delivery: .init(mechanism: .accessibilityAction, mode: .background),
+                        evidence: .deliveryAccepted)))
+        }
+    }
 
     private static func probes(
         _ log: BatchProbeLog,

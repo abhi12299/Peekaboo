@@ -27,7 +27,9 @@ public struct BatchTool: MCPTool {
         instead. The batch stops at the first failed step and lists which steps ran and which did not; a step that
         was delivered but is unverified counts as done. Set `observe_after` to true (observe the window of the first
         snapshot) or to `see` arguments such as {"app_target": "Calculator"} to get a fresh `see` after the last
-        step; it is skipped when a step fails. Use separate calls for app/window lifecycle, menus and dialogs.
+        step; it is skipped when a step fails. When `observe_after` is omitted and a step is unverified, the batch
+        observes the window of its snapshot itself and appends that `see` result, so no separate `see` is needed to
+        verify; `observe_after: false` turns this off. Use separate calls for app/window lifecycle, menus and dialogs.
         \(PeekabooMCPVersion.banner) using openai/gpt-5.6, anthropic/claude-opus-5
         """
     }
@@ -52,7 +54,8 @@ public struct BatchTool: MCPTool {
                 "observe_after": SchemaBuilder.anyOf([
                     SchemaBuilder.boolean(),
                     SchemaBuilder.object(properties: [:], additionalProperties: true),
-                ], description: "Arguments for a final `see` that runs after every step succeeded."),
+                ], description: "Arguments for a final `see` that runs after every step succeeded. Omitted: " +
+                    "observe the snapshot window only when a step is unverified. false: never observe."),
                 "snapshot": SchemaBuilder.string(
                     description: "Snapshot ID for steps that do not name their own snapshot or target."),
             ],
@@ -76,19 +79,37 @@ public struct BatchTool: MCPTool {
         case let .failure(refusal): return refusal.response
         }
         let snapshot = arguments.getString("snapshot").flatMap { $0.isEmpty ? nil : $0 }
-        let observation: Step?
-        switch await self.observation(
-            arguments.getValue(for: "observe_after"),
-            snapshot: snapshot ?? steps.lazy.compactMap { $0.arguments.getString("snapshot") }.first)
-        {
+        let observedSnapshot = snapshot ?? steps.lazy.compactMap { $0.arguments.getString("snapshot") }.first
+        let observeAfter = arguments.getValue(for: "observe_after")
+        var observation: Step?
+        switch await self.observation(observeAfter, snapshot: observedSnapshot) {
         case let .success(step): observation = step
         case let .failure(refusal): return refusal.response
         }
 
-        let summary = try await self.run(steps, snapshot: snapshot)
-        guard !summary.isError, let observation else { return summary }
+        let reports = try await self.run(steps, snapshot: snapshot)
+        let succeeded = reports.last?.status != .error
+        // Unverified delivery needs an observation; take it in this call instead of leaving it to a later one.
+        let observesAutomatically = succeeded && observeAfter == nil &&
+            reports.contains(where: { $0.status == .unverified })
+        if observesAutomatically {
+            observation = await self.automaticObservation(snapshot: observedSnapshot)
+        }
+        let summary = Self.response(reports: reports, total: steps.count, observed: succeeded && observation != nil)
+        guard succeeded, let observation else { return summary }
         let observed = try await self.context.execute(tool: observation.tool, arguments: observation.arguments)
-        return ToolResponse(content: summary.content + observed.content, isError: observed.isError)
+        // An automatic observation that fails does not make the steps that ran a failure.
+        return ToolResponse(
+            content: summary.content + observed.content,
+            isError: observesAutomatically ? summary.isError : observed.isError)
+    }
+
+    /// The `see` that verifies unverified steps when `observe_after` was not given: the batch snapshot's window, or
+    /// none when that window is unknown or `see` is unavailable.
+    @MainActor
+    private func automaticObservation(snapshot: String?) async -> Step? {
+        guard case let .success(step) = await self.observation(.bool(true), snapshot: snapshot) else { return nil }
+        return step
     }
 
     /// Resolves and validates every step before any of them runs.
@@ -151,7 +172,7 @@ public struct BatchTool: MCPTool {
 
     /// Runs the steps in order and stops at the first failure, including a step that would reuse a stale snapshot.
     @MainActor
-    private func run(_ steps: [Step], snapshot: String?) async throws -> ToolResponse {
+    private func run(_ steps: [Step], snapshot: String?) async throws -> [StepReport] {
         var carriedSnapshot = snapshot
         // The step after which the carried snapshot may no longer be reused for element targeting.
         var staleAfter: StepReport?
@@ -168,7 +189,7 @@ public struct BatchTool: MCPTool {
                         "Not run: snapshot '\(carriedSnapshot)' is stale after step \(staleAfter.index) " +
                             "(\(staleAfter.toolName)), whose result did not say the snapshot may be reused. Run " +
                             "`see` and pass the new snapshot."), dispatched: false))
-                    return Self.response(reports: reports, total: steps.count)
+                    return reports
                 }
                 stepArguments = Self.arguments(stepArguments, settingSnapshot: carriedSnapshot)
             }
@@ -176,7 +197,7 @@ public struct BatchTool: MCPTool {
             let report = StepReport(index: index, toolName: step.tool.name, response: response)
             reports.append(report)
             if report.status == .error {
-                return Self.response(reports: reports, total: steps.count)
+                return reports
             }
             if carriedSnapshot != nil, staleAfter == nil,
                Self.mayInvalidateSnapshot(toolName: step.tool.name, arguments: stepArguments, response: response)
@@ -184,7 +205,7 @@ public struct BatchTool: MCPTool {
                 staleAfter = report
             }
         }
-        return Self.response(reports: reports, total: steps.count)
+        return reports
     }
 
     /// A copy that only runs steps (and the final `see`) through tools in `toolNames`.
@@ -257,7 +278,7 @@ public struct BatchTool: MCPTool {
         return first == last ? "Step \(first)" : "Steps \(first)-\(last)"
     }
 
-    private static func response(reports: [StepReport], total: Int) -> ToolResponse {
+    private static func response(reports: [StepReport], total: Int, observed: Bool) -> ToolResponse {
         let lines = reports.map { "\($0.index). \($0.toolName): \($0.status.rawValue): \($0.message)" }
         guard let failed = reports.last, failed.status == .error else {
             var header = "\(AgentDisplayTokens.Status.success) Ran all \(total) steps."
@@ -266,7 +287,11 @@ public struct BatchTool: MCPTool {
                 header += unverified == 1
                     ? " 1 step was delivered but unverified"
                     : " \(unverified) steps were delivered but unverified"
-                header += "; observe the target once to verify, and do not retry blindly."
+                header += observed
+                    ? "; the observation below verifies them, so do not retry blindly."
+                    : "; pass observe_after (true with a batch snapshot, or `see` arguments such as " +
+                    "{\"app_target\": \"Calculator\"}) to verify in the same call, or observe the target once, " +
+                    "and do not retry blindly."
             }
             return ToolResponse.text(([header] + lines).joined(separator: "\n"))
         }
