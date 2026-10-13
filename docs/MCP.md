@@ -410,6 +410,16 @@ count, `characters_typed` reports that lower bound. Rich/binary and current-clip
 exact-window capability before clipboard mutation or Cmd+V dispatch, then return the normal retry-unsafe
 may-have-pasted result because macOS does not acknowledge receiver consumption.
 
+Background text `paste` (app/PID target, no clipboard) follows the `type` rule: an accepted but unverified outcome is a
+success with the unverified warning, `characters_typed` null, and `_meta` keeping `dispatched_unverified` and
+retry-unsafe. Clipboard-backed `paste` (foreground, current clipboard, non-text payloads) stays an error when
+unconfirmed: the clipboard is restored after the Cmd+V wait, so an unconfirmed Cmd+V may paste the user's previous
+clipboard instead of the requested content.
+
+MCP `dialog` `list` treats "no dialog open" as an answer, not a failure: it succeeds with "No dialog is open for
+<app>", `dialog_present=false`, and empty `buttons`, `text_fields`, and `text_elements`. App/window not found,
+ambiguity, permission, and accessibility failures remain errors.
+
 Pointer tools use an explicit interruption policy. Background `scroll` accepts an element `on` or an exact-window `coords` point. Coordinates require a fresh pixel-backed reference and prefer the hit's nearest proven AX scroll owner. Documented unavailable hit testing or verified ancestry without an exposed owner may instead use that independent pixel authority for the existing visible native-WebKit wheel route, retaining the requested point without claiming an AX receiver. Positive ownership conflicts and native lookup failures refuse. Coordinates never search arbitrary descendants or siblings, move the shared cursor, or imply foreground permission. Wheel delivery remains unverifiable and retry-unsafe; Electron/Chromium/Catalyst and stale targets do not gain a new fallback. Set `foreground: true` only for existing element/targetless, smooth, or delayed scrolling—not coordinates.
 
 MCP scroll coordinates match click: global display points by default, with `coordinate_space: "image_pixels"` or `"normalized"` mapped through the delivered image scale and ROI using `coordinate_reference`. A supplied `snapshot` must match the reference. CLI `scroll --at` deliberately defaults to window-relative logical points; `--global` selects the global basis. Coordinate scroll requires protocol 1.43 plus `backgroundCoordinateScroll`; older or capability-missing execution hosts refuse before dispatch.
