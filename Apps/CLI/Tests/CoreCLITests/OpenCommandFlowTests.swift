@@ -101,6 +101,69 @@ struct AppCommandLaunchFlowTests {
     }
 
     @Test
+    func `Background launch opens existing local documents without activating the app`() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-cli-open-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let document = directory.appendingPathComponent("notes.txt")
+        try Data("hello".utf8).write(to: document)
+        let service = self.makeLaunchService(name: "TextEdit", bundleIdentifier: "com.apple.TextEdit")
+        var command = AppCommand.LaunchSubcommand()
+        command.app = "TextEdit"
+        command.openTargets = [document.path]
+
+        try await command.run(using: self.makeRuntime(applicationService: service))
+
+        let request = try #require(service.launchRequests.first)
+        #expect(!request.activates)
+        #expect(request.allowsColdBackgroundLaunch)
+        #expect(!request.createsNewInstance)
+        #expect(request.openURLs.map(\.path) == [document.path])
+    }
+
+    @Test
+    func `Background document open reports the opened documents`() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-cli-open-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let document = directory.appendingPathComponent("notes.txt")
+        try Data("hello".utf8).write(to: document)
+        let service = self.makeLaunchService(name: "TextEdit", bundleIdentifier: "com.apple.TextEdit")
+        var command = AppCommand.LaunchSubcommand()
+        command.app = "TextEdit"
+        command.openTargets = [document.path]
+        let runtime = CommandRuntime(
+            configuration: .init(verbose: false, jsonOutput: false, logLevel: nil),
+            services: ServicesWithApplicationStub(applications: service)
+        )
+
+        let output = try await captureStandardOutputText {
+            try await command.run(using: runtime)
+        }
+
+        #expect(output.contains("Opened \(document.path) in TextEdit (PID: 42) without activating it"))
+        #expect(!output.contains("Already running"))
+    }
+
+    @Test(arguments: ["/nonexistent/peekaboo-missing-document.txt", "https://example.com", "/tmp"])
+    func `Background launch refuses open targets that are not existing local documents`(
+        target: String
+    ) async throws {
+        let service = self.makeLaunchService(name: "TextEdit", bundleIdentifier: "com.apple.TextEdit")
+        var command = AppCommand.LaunchSubcommand()
+        command.app = "TextEdit"
+        command.openTargets = [target]
+
+        await #expect(throws: ExitCode.self) {
+            try await command.run(using: self.makeRuntime(applicationService: service))
+        }
+
+        #expect(service.launchRequests.isEmpty)
+    }
+
+    @Test
     func `Launch forwards open targets with foreground consent`() async throws {
         let service = self.makeLaunchService(name: "Preview", bundleIdentifier: "com.apple.Preview")
         var command = AppCommand.LaunchSubcommand()

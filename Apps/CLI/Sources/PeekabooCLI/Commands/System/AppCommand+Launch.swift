@@ -17,21 +17,22 @@ extension AppCommand {
             discussion: """
             Without --foreground, an app that is not running is launched without activating it; if it
             takes the foreground anyway, the previously frontmost app is re-activated. An app that is
-            already running is left untouched (exact no-op). Open targets and new instances require
+            already running is left untouched (exact no-op). --open with existing local files opens them in
+            the app without activating it, running or not. URL open targets and new instances require
             --foreground because macOS may activate the target.
 
             KEY OPTIONS:
               --bundle-id <id>       Launch by bundle identifier instead of name/path
-              --open <path-or-url>   Repeatable; pass documents/URLs to the app right after launch
+              --open <path-or-url>   Repeatable; pass documents/URLs to the app (URLs need --foreground)
               --new-instance         Launch a distinct process even if the app is already running
               --wait-ready           Wait until LaunchServices reports startup complete
               --wait-for-window      Wait for a real AX or WindowServer window
-              --foreground           Activate the app; required for open targets or a new instance
+              --foreground           Activate the app; required for URL open targets or a new instance
 
             EXAMPLES:
               peekaboo app launch "Safari"
               peekaboo app launch "Safari" --open https://example.com --foreground
-              peekaboo app launch "Preview" --open ~/Desktop/report.pdf --foreground
+              peekaboo app launch "Preview" --open ~/Desktop/report.pdf
               peekaboo app launch "TextEdit" --new-instance --wait-ready --foreground
               peekaboo app launch "Safari" --foreground
               peekaboo app launch --bundle-id com.apple.Notes --wait-ready --foreground
@@ -53,7 +54,7 @@ extension AppCommand {
         @Flag(help: "Launch a distinct process even if the app is already running")
         var newInstance = false
 
-        @Flag(help: "Activate the app; required for open targets or a new instance")
+        @Flag(help: "Activate the app; required for URL open targets or a new instance")
         var foreground = false
 
         @Flag(help: AppCommand.LaunchSubcommand.noFocusHelp)
@@ -98,7 +99,7 @@ extension AppCommand {
                 self.renderLaunchSuccess(
                     app: launch.result.payload,
                     outcome: launch.result.outcome,
-                    activates: launch.request.activates
+                    request: launch.request
                 )
             } catch {
                 handleError(error, customCode: applicationLaunchErrorCode(for: error))
@@ -129,10 +130,9 @@ extension AppCommand {
                 )
             }
             if !self.foreground, !self.openTargets.isEmpty {
-                throw ApplicationLifecycleRefusalError.backgroundLaunch(
-                    "Background URL or document delivery is refused before dispatch because the target app " +
-                        "can activate."
-                )
+                // Existing local documents open without activation (as the MCP `open` argument does); URLs and
+                // anything else are refused before dispatch because the receiving app can activate.
+                try BackgroundDocumentOpenPolicy.validate(self.openTargets.map { try Self.resolveOpenTarget($0) })
             }
         }
 
@@ -151,7 +151,7 @@ extension AppCommand {
         private func renderLaunchSuccess(
             app: ServiceApplicationInfo,
             outcome: DesktopActionOutcome?,
-            activates: Bool
+            request: ApplicationLaunchRequest
         ) {
             struct LaunchResult: Codable {
                 let action: String
@@ -190,8 +190,13 @@ extension AppCommand {
             )
 
             output(data, outcome: outcome) {
-                // A legacy host without canonical outcomes cannot cold-launch in the background.
-                if outcome?.state == .confirmedNoChange || (outcome == nil && !activates) {
+                if !request.openURLs.isEmpty, outcome?.state != .confirmedNoChange {
+                    let documents = request.openURLs.map { $0.isFileURL ? $0.path : $0.absoluteString }
+                        .joined(separator: ", ")
+                    let activation = request.activates ? "" : " without activating it"
+                    print("✓ Opened \(documents) in \(app.name) (PID: \(app.processIdentifier))\(activation)")
+                } else if outcome?.state == .confirmedNoChange || (outcome == nil && !request.activates) {
+                    // A legacy host without canonical outcomes cannot cold-launch in the background.
                     print("✓ Already running: \(app.name) (PID: \(app.processIdentifier)); no launch dispatched")
                 } else {
                     print("✓ Launched \(app.name) (PID: \(app.processIdentifier))")
