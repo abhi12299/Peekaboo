@@ -432,35 +432,7 @@ extension WindowManagementService {
         var verification = PinnedWindowCloseVerification()
         while clock.now < deadline {
             try Task.checkCancellation()
-            let windowServerIdentity = SystemIdentityResolver.windowIdentity(CGWindowID(expectedIdentity.windowID))
-            let ownerGenerationMatches = windowServerIdentity.map {
-                $0.ownerProcessIdentifier == expectedIdentity.ownerProcessIdentifier &&
-                    SystemIdentityResolver.processStartIdentity($0.ownerProcessIdentifier) ==
-                    expectedIdentity.ownerProcessStartIdentity
-            } ?? true
-            guard ownerGenerationMatches else {
-                throw PeekabooError.commandFailed(
-                    "Window \(expectedIdentity.windowID) changed owner identity during close")
-            }
-            let windowServerMatchesReceipt = windowServerIdentity.map { identity in
-                identity.ownerProcessIdentifier == expectedIdentity.ownerProcessIdentifier &&
-                    identity.bounds == expectedIdentity.capturedBounds
-            }
-            let axWindowPresence: PinnedMinimizedWindowAXPresence? = if windowServerMatchesReceipt != true {
-                await BoundedBackgroundWindowAX.windowPresence(expectedIdentity: expectedIdentity)
-            } else {
-                nil
-            }
-            let disposition = pinnedWindowClosePresenceDisposition(
-                windowServerEntryPresent: windowServerIdentity != nil,
-                windowServerEntryMatchesReceipt: windowServerMatchesReceipt,
-                minimizedAXPresence: axWindowPresence,
-                expectedMinimized: expectedIdentity.isMinimized == true)
-            if disposition == .replacement {
-                throw PeekabooError.commandFailed(
-                    "Window \(expectedIdentity.windowID) changed identity during close")
-            }
-
+            let disposition = try await self.pinnedWindowClosePresence(expectedIdentity)
             let decision = verification.observe(
                 disposition,
                 elapsed: startedAt.duration(to: clock.now))
@@ -476,6 +448,56 @@ extension WindowManagementService {
             try await Task.sleep(for: .milliseconds(100))
         }
         return .retryClose
+    }
+
+    private func pinnedWindowClosePresence(
+        _ expectedIdentity: WindowMutationIdentity) async throws -> PinnedWindowClosePresenceDisposition
+    {
+        let windowServerIdentity = SystemIdentityResolver.windowIdentity(CGWindowID(expectedIdentity.windowID))
+        let ownerGenerationMatches = windowServerIdentity.map {
+            $0.ownerProcessIdentifier == expectedIdentity.ownerProcessIdentifier &&
+                SystemIdentityResolver.processStartIdentity($0.ownerProcessIdentifier) ==
+                expectedIdentity.ownerProcessStartIdentity
+        } ?? true
+        guard ownerGenerationMatches else {
+            throw PeekabooError.commandFailed(
+                "Window \(expectedIdentity.windowID) changed owner identity during close")
+        }
+        let windowServerMatchesReceipt = windowServerIdentity.map { identity in
+            identity.ownerProcessIdentifier == expectedIdentity.ownerProcessIdentifier &&
+                identity.bounds == expectedIdentity.capturedBounds
+        }
+        let windowServerEntryOrderedOut = windowServerIdentity.map { identity in
+            pinnedWindowCloseRowIsOrderedOut(
+                isOnScreen: identity.isOnScreen,
+                spaceCount: identity.isOnScreen ? nil : Self.spaceCount(forWindowID: identity.windowID))
+        } ?? false
+        let axWindowPresence: PinnedMinimizedWindowAXPresence? =
+            if windowServerMatchesReceipt != true || windowServerEntryOrderedOut {
+                await BoundedBackgroundWindowAX.windowPresence(expectedIdentity: expectedIdentity)
+            } else {
+                nil
+            }
+        let disposition = pinnedWindowClosePresenceDisposition(
+            windowServerEntryPresent: windowServerIdentity != nil,
+            windowServerEntryMatchesReceipt: windowServerMatchesReceipt,
+            windowServerEntryOrderedOut: windowServerEntryOrderedOut,
+            minimizedAXPresence: axWindowPresence,
+            expectedMinimized: expectedIdentity.isMinimized == true)
+        if disposition == .replacement {
+            throw PeekabooError.commandFailed(
+                "Window \(expectedIdentity.windowID) changed identity during close")
+        }
+        return disposition
+    }
+
+    /// Number of Spaces holding the window, or nil when the Space query is unreadable.
+    private static func spaceCount(forWindowID windowID: CGWindowID) -> Int? {
+        let connection = _CGSDefaultConnection()
+        guard connection != 0,
+              let spaces = CGSCopySpacesForWindows(connection, kCGSAllSpacesMask, [windowID] as CFArray)
+        else { return nil }
+        return (spaces as NSArray).count
     }
 
     func pinnedWindowDisappeared(_ expectedIdentity: WindowMutationIdentity) async throws -> Bool {
@@ -839,13 +861,23 @@ func minimizedCloseRequiresForegroundFallback(isMinimized: Bool) -> Bool {
     isMinimized
 }
 
+/// Whether a WindowServer row belongs to a window AppKit ordered out (closed but not yet released),
+/// as opposed to one on another Space (which keeps its Space) or an unreadable Space query (`nil`).
+func pinnedWindowCloseRowIsOrderedOut(isOnScreen: Bool, spaceCount: Int?) -> Bool {
+    !isOnScreen && spaceCount == 0
+}
+
 func pinnedWindowClosePresenceDisposition(
     windowServerEntryPresent: Bool,
     windowServerEntryMatchesReceipt: Bool? = nil,
+    windowServerEntryOrderedOut: Bool = false,
     minimizedAXPresence: PinnedMinimizedWindowAXPresence?,
     expectedMinimized: Bool) -> PinnedWindowClosePresenceDisposition
 {
-    if windowServerEntryPresent, windowServerEntryMatchesReceipt != false {
+    // A closed window can keep an ordered-out WindowServer row (off screen, on no Space) with its
+    // old frame for a while. Such a row alone is not presence; the AX scan decides.
+    let orderedOutClosedCandidate = windowServerEntryOrderedOut && !expectedMinimized
+    if windowServerEntryPresent, windowServerEntryMatchesReceipt != false, !orderedOutClosedCandidate {
         return .present
     }
     if let minimizedAXPresence {

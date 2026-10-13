@@ -704,6 +704,48 @@ struct WindowStateMutationPolicyTests {
     }
 
     @Test
+    func `closed window whose ordered-out WindowServer row lingers counts as missing once AX lost it`() {
+        let disposition = pinnedWindowClosePresenceDisposition(
+            windowServerEntryPresent: true,
+            windowServerEntryMatchesReceipt: true,
+            windowServerEntryOrderedOut: true,
+            minimizedAXPresence: .missing,
+            expectedMinimized: false)
+
+        #expect(disposition == .missing)
+    }
+
+    @Test
+    func `ordered-out WindowServer row stays present or unverifiable unless AX confirms the window is gone`() {
+        #expect(pinnedWindowClosePresenceDisposition(
+            windowServerEntryPresent: true,
+            windowServerEntryMatchesReceipt: true,
+            windowServerEntryOrderedOut: true,
+            minimizedAXPresence: .present,
+            expectedMinimized: false) == .present)
+        #expect(pinnedWindowClosePresenceDisposition(
+            windowServerEntryPresent: true,
+            windowServerEntryMatchesReceipt: true,
+            windowServerEntryOrderedOut: true,
+            minimizedAXPresence: nil,
+            expectedMinimized: false) == .unverifiable)
+        #expect(pinnedWindowClosePresenceDisposition(
+            windowServerEntryPresent: true,
+            windowServerEntryMatchesReceipt: true,
+            windowServerEntryOrderedOut: false,
+            minimizedAXPresence: .missing,
+            expectedMinimized: false) == .present)
+    }
+
+    @Test
+    func `only an off-screen WindowServer row on no Space counts as ordered out`() {
+        #expect(pinnedWindowCloseRowIsOrderedOut(isOnScreen: false, spaceCount: 0))
+        #expect(!pinnedWindowCloseRowIsOrderedOut(isOnScreen: false, spaceCount: 1))
+        #expect(!pinnedWindowCloseRowIsOrderedOut(isOnScreen: false, spaceCount: nil))
+        #expect(!pinnedWindowCloseRowIsOrderedOut(isOnScreen: true, spaceCount: 0))
+    }
+
+    @Test
     func `unverifiable close presence fails closed immediately`() {
         var verification = PinnedWindowCloseVerification()
 
