@@ -35,6 +35,7 @@ Action-oriented UI tools include:
 - `set_value` for direct accessibility value mutation on settable fields and controls.
 - `select_text` for literal text selection or caret placement without changing the text value.
 - `action` for invoking a named accessibility action such as `AXPress`, `AXShowMenu`, or `AXIncrement`.
+- `batch` for running several of these input steps in one call (see [Batching input steps](#batching-input-steps)).
 
 Inventory is exposed on the nouns: use `app` with `action: "list"` for running applications and `window` with
 `action: "list"` plus `app` for window IDs, bounds, off-screen state, and combined-observation eligibility. Each
@@ -466,6 +467,45 @@ Explicit foreground modifier-click with restoration reporting:
   "snapshot": "snapshot-id-from-exact-window-see",
   "foreground": true,
   "modifiers": ["cmd", "shift"]
+}
+```
+
+## Batching input steps
+
+`batch` runs an ordered list of input steps in one call, for example pressing several Calculator buttons or filling
+several fields. Each step is `{"tool": <name>, "args": {...}}`, where `args` are exactly what that tool takes on its own.
+Each step goes through the same path as a separate call, so it gets the same argument validation, execution policy,
+background targeting, and outcome classification.
+
+- **Step tools:** `click`, `type`, `press`, `scroll`, `select_text`, `set_value`, `paste`, and `sleep`. Observation,
+  app/window lifecycle, menus, and dialogs stay separate calls.
+- **Refused up front:** a nested `batch`, a tool outside the allowlist, or a step with invalid arguments is refused
+  before any step runs; the response says "No steps ran."
+- **Snapshots:** a step that omits `snapshot` and names no `app`, `pid`, `window_id`, `window_index`, `window_title`,
+  or `coordinate_reference` reuses the batch-level `snapshot` (or the last snapshot an earlier step named). Element
+  clicks delivered as accessibility actions keep the snapshot reusable. After any other mutating step, a later step that
+  would reuse the snapshot stops the batch with an error naming the step that left it stale; run `see` and pass the
+  new snapshot.
+- **Errors:** the batch stops at the first failed step. The response lists each step as `ok`, `unverified`, or
+  `error`, and says which steps ran and which did not. The call is an error only if a step failed.
+- **Unverified steps:** a step that was delivered but could not be verified counts as done and the batch continues.
+  Observe the target once afterward instead of retrying blindly.
+- **`observe_after`:** opt-in (off unless set). `true` runs `see` on the window of the batch's first snapshot; an
+  object is used as the `see` arguments (for example `{"app_target": "Calculator"}`). The result is appended to the
+  batch output. It is skipped when a step fails.
+- **Disabling:** `PEEKABOO_DISABLE_TOOLS=batch` removes the tool. Tools disabled or not allowed for the server
+  (`PEEKABOO_DISABLE_TOOLS`, `PEEKABOO_ALLOW_TOOLS`) are also refused as steps, and `observe_after` needs `see` to be
+  enabled.
+
+```json
+{
+  "snapshot": "snapshot-id-from-exact-window-see",
+  "steps": [
+    { "tool": "click", "args": { "on": "B7" } },
+    { "tool": "click", "args": { "on": "B12" } },
+    { "tool": "press", "args": { "keys": ["return"] } }
+  ],
+  "observe_after": true
 }
 ```
 
