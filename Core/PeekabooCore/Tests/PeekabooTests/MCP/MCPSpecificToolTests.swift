@@ -348,7 +348,7 @@ struct MCPSpecificToolTests {
         #expect(properties["openTargets"] == nil)
         #expect(properties["to"] == nil)
         #expect(properties["cycle"] == nil)
-        #expect(tool.description.contains("Focus, switch, open, relaunch, unhide"))
+        #expect(tool.description.contains("Focus, switch, the `open` action, relaunch, unhide"))
         #expect(tool.description.contains("foreground-capable Agent session"))
 
         let foregroundTool = makeTestTool(executionPolicy: .foregroundAllowed, AppTool.init)
