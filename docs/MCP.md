@@ -490,9 +490,11 @@ background targeting, and outcome classification.
   `error`, and says which steps ran and which did not. The call is an error only if a step failed.
 - **Unverified steps:** a step that was delivered but could not be verified counts as done and the batch continues.
   Observe the target once afterward instead of retrying blindly.
-- **`observe_after`:** opt-in (off unless set). `true` runs `see` on the window of the batch's first snapshot; an
-  object is used as the `see` arguments (for example `{"app_target": "Calculator"}`). The result is appended to the
-  batch output. It is skipped when a step fails.
+- **`observe_after`:** `true` runs `see` on the window of the batch's first snapshot; an object is used as the `see`
+  arguments (for example `{"app_target": "Calculator"}`). The result is appended to the batch output. It is skipped
+  when a step fails. When it is omitted and every step ran but at least one is unverified, the batch observes the
+  snapshot's window automatically (a failed automatic `see` does not fail the batch); with no known window it says how
+  to pass `observe_after` instead. `false` turns the automatic observation off.
 - **Disabling:** `PEEKABOO_DISABLE_TOOLS=batch` removes the tool. Tools disabled or not allowed for the server
   (`PEEKABOO_DISABLE_TOOLS`, `PEEKABOO_ALLOW_TOOLS`) are also refused as steps, and `observe_after` needs `see` to be
   enabled.
