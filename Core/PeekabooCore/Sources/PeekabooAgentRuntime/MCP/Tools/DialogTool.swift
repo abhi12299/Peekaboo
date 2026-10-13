@@ -39,7 +39,8 @@ public struct DialogTool: MCPTool {
         Interact with system dialogs and alerts (alerts, sheets, NSSavePanel/NSOpenPanel).
 
         Actions:
-        - list: inspect dialog structure (buttons, text fields, static text)
+        - list: inspect dialog structure (buttons, text fields, static text); with no dialog open it
+          succeeds with dialog_present=false
         - click: press a dialog button
         - input: type into a dialog text field
         - file: drive NSOpenPanel/NSSavePanel dialogs (path/name/select/verify)
@@ -235,10 +236,18 @@ public struct DialogTool: MCPTool {
         let appHint = target.appHint
         switch action {
         case .list:
-            let elements = if target.selector.hasTarget {
-                try await self.context.dialogs.listDialogElements(target: target.selector)
-            } else {
-                try await self.context.dialogs.listDialogElements(windowTitle: nil, appName: nil)
+            let elements: DialogElements
+            do {
+                elements = if target.selector.hasTarget {
+                    try await self.context.dialogs.listDialogElements(target: target.selector)
+                } else {
+                    try await self.context.dialogs.listDialogElements(windowTitle: nil, appName: nil)
+                }
+            } catch where DialogAbsence.isNoDialogOpen(error) {
+                return self.formatNoDialog(
+                    executionTime: Date().timeIntervalSince(startTime),
+                    windowTitle: windowTitle,
+                    appHint: appHint)
             }
             let targetIdentity = try self.validatedDialogListTarget(
                 elements,

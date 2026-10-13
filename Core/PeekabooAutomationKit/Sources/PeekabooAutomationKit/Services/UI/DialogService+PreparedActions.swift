@@ -799,7 +799,7 @@ extension DialogService {
     {
         let candidateIDs = Self.candidateWindowIDs(candidates.map(\.target))
         let message = candidates.isEmpty
-            ? "No dialog matched the selected target."
+            ? DialogAbsence.noDialogMatchedMessage
             : "Dialog target is ambiguous across \(candidates.count) eligible dialogs."
         let hint: String
         if let windowID = target.windowID {

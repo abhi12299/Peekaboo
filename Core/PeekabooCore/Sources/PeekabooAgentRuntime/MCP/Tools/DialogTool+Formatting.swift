@@ -168,6 +168,32 @@ extension DialogTool {
             meta: ToolEventSummary.merge(summary: summary, into: .object(meta)))
     }
 
+    /// A read-only list that found no dialog is an answer, not a failure.
+    func formatNoDialog(
+        executionTime: TimeInterval,
+        windowTitle: String?,
+        appHint: String?) -> ToolResponse
+    {
+        let owner = appHint.map { " for \($0)" } ?? ""
+        let message = "\(AgentDisplayTokens.Status.success) No dialog is open\(owner) " +
+            "in \(Self.formattedDuration(executionTime))"
+        let meta: [String: Value] = [
+            "dialog_present": .bool(false),
+            "buttons": .array([]),
+            "text_fields": .array([]),
+            "text_elements": .array([]),
+            "execution_time": .double(executionTime),
+        ]
+        let summary = ToolEventSummary(
+            targetApp: appHint,
+            windowTitle: windowTitle,
+            actionDescription: "Dialog List",
+            notes: "No dialog open")
+        return ToolResponse(
+            content: [.text(text: message, annotations: nil, _meta: nil)],
+            meta: ToolEventSummary.merge(summary: summary, into: .object(meta)))
+    }
+
     static func formattedDuration(_ duration: TimeInterval) -> String {
         String(format: "%.2fs", duration)
     }

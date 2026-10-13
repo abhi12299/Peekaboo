@@ -307,6 +307,78 @@ struct MCPDialogPreparedActionTests {
     }
 
     @Test
+    func `targeted dialog list with no dialog open succeeds with an empty result`() async throws {
+        let application = ServiceApplicationInfo(
+            processIdentifier: 89,
+            processStartIdentity: 890,
+            bundleIdentifier: "com.apple.TextEdit",
+            name: "TextEdit")
+        let dialogs = PreparedDialogService()
+        dialogs.targetedListError = DesktopActionFailure.preDispatchRefusal(
+            reason: .targetUnavailable,
+            message: "No dialog matched the selected target.",
+            hint: "Candidate window IDs: none. Add --window-id or a more exact selector.")
+        let context = await MCPToolTestHelpers.makeContext(
+            applications: MockApplicationService(applications: [application]),
+            dialogs: dialogs,
+            executionPolicy: .backgroundOnly)
+
+        let response = try await context.execute(
+            tool: DialogTool(context: context),
+            arguments: ToolArguments(raw: ["action": "list", "app": "TextEdit"]))
+
+        #expect(!response.isError)
+        let text = response.content.compactMap { content -> String? in
+            if case let .text(text, _, _) = content { return text }
+            return nil
+        }.joined()
+        #expect(text.contains("No dialog is open"))
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["dialog_present"] == .bool(false))
+        #expect(meta["buttons"] == .array([]))
+    }
+
+    @Test
+    func `targetless dialog list with no active dialog succeeds with an empty result`() async throws {
+        let context = await MCPToolTestHelpers.makeContext(
+            dialogs: PreparedDialogService(),
+            executionPolicy: .backgroundOnly)
+
+        let response = try await context.execute(
+            tool: DialogTool(context: context),
+            arguments: ToolArguments(raw: ["action": "list"]))
+
+        #expect(!response.isError)
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["dialog_present"] == .bool(false))
+    }
+
+    @Test(arguments: [
+        DesktopActionFailure.preDispatchRefusal(
+            reason: .targetUnavailable,
+            message: "The dialog window selector matched no exact window."),
+        DesktopActionFailure.preDispatchRefusal(
+            reason: .targetUnavailable,
+            message: "Dialog target is ambiguous across 2 eligible dialogs."),
+        DesktopActionFailure.preDispatchRefusal(
+            reason: .permissionDenied,
+            message: DialogAbsence.noDialogMatchedMessage),
+    ])
+    func `targeted dialog list keeps real lookup failures as errors`(failure: DesktopActionFailure) async throws {
+        let dialogs = PreparedDialogService()
+        dialogs.targetedListError = failure
+        let context = await MCPToolTestHelpers.makeContext(
+            dialogs: dialogs,
+            executionPolicy: .backgroundOnly)
+
+        let response = try await context.execute(
+            tool: DialogTool(context: context),
+            arguments: ToolArguments(raw: ["action": "list", "pid": 89]))
+
+        #expect(response.isError)
+    }
+
+    @Test
     func `exact-window input leaves sheet focus to dialog service without selector downgrade`() async throws {
         let windows = EmptyRecordingWindowService()
         let dialogs = PreparedDialogService()
@@ -742,6 +814,7 @@ private final class PreparedDialogService: DialogServiceProtocol {
     var lastExactForcedDismissRequest: DialogForcedDismissExecutionRequest?
     var lastExactFileRequest: DialogFileExecutionRequest?
     var targetedListElements: DialogElements?
+    var targetedListError: (any Error)?
     var preparedProcessGeneration: UInt64 = 890
 
     func prepareDialogAction(_ request: DialogActionPreparationRequest) throws -> PreparedDialogActionReceipt {
@@ -939,6 +1012,7 @@ private final class PreparedDialogService: DialogServiceProtocol {
     }
 
     func listDialogElements(target _: DialogTargetSelector) async throws -> DialogElements {
+        if let targetedListError { throw targetedListError }
         guard let targetedListElements else { throw DialogError.noActiveDialog }
         return targetedListElements
     }
