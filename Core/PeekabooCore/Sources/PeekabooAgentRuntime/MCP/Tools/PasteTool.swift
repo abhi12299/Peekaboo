@@ -887,6 +887,7 @@ public struct PasteTool: MCPTool {
             actionResult,
             destination: destination)
         let typeResult = validatedActionResult.payload
+        let deliveryUnverified = MCPDeliveredUnverifiedInput.matches(validatedActionResult.outcome)
         if Task.isCancelled {
             return try await self.directTextOutcomeResponse(
                 InputDeliveryIndeterminateError(
@@ -907,7 +908,8 @@ public struct PasteTool: MCPTool {
                 "textPreview": setResult.textPreview.map(Value.string) ?? .null,
             ]),
             "paste_method": .string("background_text"),
-            "characters_typed": .int(typeResult.totalCharacters),
+            // Accepted but unverified keystrokes prove no typed characters.
+            "characters_typed": deliveryUnverified ? .null : .int(typeResult.totalCharacters),
             "execution_time": .double(executionTime),
             "delivery_mode": .string("background"),
             "target_pid": resultTarget.processIdentifier.map { .int(Int($0)) } ?? .int(Int(targetPID)),
@@ -919,10 +921,17 @@ public struct PasteTool: MCPTool {
             windowTitle: nil,
             actionDescription: "Paste text",
             notes: setResult.utiIdentifier)
+        let duration = String(format: "%.2f", executionTime) + "s"
+        let message = if deliveryUnverified {
+            MCPDeliveredUnverifiedInput.message(
+                dispatched: "paste of text in the background in \(duration)",
+                verifying: "text")
+        } else {
+            "\(AgentDisplayTokens.Status.success) Pasted text in the background in \(duration)"
+        }
         return try ToolResponse(
             content: [.text(
-                text: "\(AgentDisplayTokens.Status.success) Pasted text in the background " +
-                    "in \(String(format: "%.2f", executionTime))s",
+                text: message,
                 annotations: nil,
                 _meta: nil)],
             meta: ToolEventSummary.merge(
@@ -945,10 +954,15 @@ public struct PasteTool: MCPTool {
         _ result: UIAutomationActionResult<TypeResult>,
         destination: UIAutomationTarget) throws -> UIAutomationActionResult<TypeResult>
     {
+        // Direct text delivery uses no clipboard, so text the receiver accepted but Peekaboo could not verify
+        // is a success with a warning, as for `type`.
+        let deliveredUnverified = MCPDeliveredUnverifiedInput.matches(result.outcome)
         guard let authorizedPlan = AuthorizedDesktopTargetPlan.current else {
-            try DesktopActionFailure.requireConfirmedIfReported(
-                result.outcome,
-                operation: "Background text paste")
+            if !deliveredUnverified {
+                try DesktopActionFailure.requireConfirmedIfReported(
+                    result.outcome,
+                    operation: "Background text paste")
+            }
             return result
         }
 
@@ -977,7 +991,9 @@ public struct PasteTool: MCPTool {
             fallbackDelivery: UIAutomationActionResultSemantics.keyboardDelivery(for: destination))
         let outcome = try UIAutomationActionResultSemantics.requireAcceptedOutcome(
             result.outcome,
-            policy: .confirmed(requiring: .background),
+            policy: deliveredUnverified
+                ? .confirmedOrDispatched(requiring: .background)
+                : .confirmed(requiring: .background),
             operation: "Background text paste",
             targetReceipt: resultIdentity?.actionTargetReceipt ?? authorizedIdentity.actionTargetReceipt,
             missingOutcomeMessage: "Background text paste returned without a canonical outcome.",

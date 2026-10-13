@@ -1,4 +1,5 @@
 import Foundation
+import MCP
 import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
 import TachikomaMCP
@@ -105,6 +106,67 @@ struct MCPDeliveredUnverifiedInputTests {
         #expect(text.contains("delivery is unverified"))
         #expect(text.contains("unsafe to retry blindly"))
         #expect(fixture.automation.scrollRequests.count == 1)
+    }
+
+    @Test
+    func `background text paste whose delivery was accepted but not verified succeeds with a warning`() async throws {
+        let app = AutomationTestFixtures.application(
+            processIdentifier: 333,
+            processStartIdentity: 33,
+            bundleIdentifier: "com.example.editor",
+            name: "Editor")
+        let automation = MockConfirmedTypeAutomationService(accessibilityGranted: true)
+        let outcome = Self.deliveredUnverified(.processTargetedEvents)
+        automation.uiAutomationOutcomeScript.setDefaultOutcome(outcome)
+        let clipboard = ScriptedClipboardService()
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            applications: MockApplicationService(applications: [app]),
+            clipboard: clipboard)
+
+        let response = try await context.execute(
+            tool: PasteTool(context: context),
+            arguments: ToolArguments(raw: ["app": "Editor", "text": "hello"]))
+
+        #expect(!response.isError)
+        try MCPToolTestHelpers.expectCanonicalOutcomeMetadata(outcome, in: response)
+        let text = Self.text(response)
+        #expect(text.hasPrefix("\(AgentDisplayTokens.Status.success) Dispatched paste"))
+        #expect(text.contains("delivery is unverified"))
+        #expect(text.contains("unsafe to retry blindly"))
+        #expect(response.meta?.objectValue?["characters_typed"] == Value.null)
+        #expect(automation.targetedTypeActionsCalls.count == 1)
+        #expect(clipboard.restoreCallCount == 0)
+    }
+
+    @Test(arguments: [
+        DesktopActionOutcome.indeterminate(
+            delivery: .init(mechanism: .processTargetedEvents, mode: .background),
+            evidence: .completionUnknown),
+        DesktopActionOutcome.suspectedNoop(
+            delivery: .init(mechanism: .processTargetedEvents, mode: .background)),
+    ])
+    func `background text paste that is not accepted delivery stays an error`(
+        outcome: DesktopActionOutcome) async throws
+    {
+        let app = AutomationTestFixtures.application(
+            processIdentifier: 333,
+            processStartIdentity: 33,
+            bundleIdentifier: "com.example.editor",
+            name: "Editor")
+        let automation = MockConfirmedTypeAutomationService(accessibilityGranted: true)
+        automation.uiAutomationOutcomeScript.setDefaultOutcome(outcome)
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            applications: MockApplicationService(applications: [app]),
+            clipboard: ScriptedClipboardService())
+
+        let response = try await context.execute(
+            tool: PasteTool(context: context),
+            arguments: ToolArguments(raw: ["app": "Editor", "text": "hello"]))
+
+        #expect(response.isError)
+        #expect(!Self.text(response).contains("Dispatched paste"))
     }
 
     private static func deliveredUnverified(
