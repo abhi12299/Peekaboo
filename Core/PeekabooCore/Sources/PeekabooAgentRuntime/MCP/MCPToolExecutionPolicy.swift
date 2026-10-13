@@ -229,7 +229,8 @@ private enum BackgroundOnlyToolPolicy {
             self.sharedInputViolation(toolName: toolName)
         case "shell":
             .sharedDesktop("shell execution can bypass the Agent's background-only tool boundary")
-        case "agent":
+        case "agent", "batch":
+            // Each batch step is dispatched through the context and checked against this policy on its own.
             nil
         default:
             .unclassified
@@ -543,8 +544,8 @@ private enum BackgroundOnlyToolPolicy {
 
 private enum ForegroundAllowedAgentToolPolicy {
     private static let allowedToolNames: Set<String> = [
-        "action", "analyze", "app", "browser", "capture", "click", "clipboard", "dialog", "dock", "done", "drag",
-        "image", "inspect_ui", "menu", "move", "need_info", "paste", "permissions", "press", "scroll", "see",
+        "action", "analyze", "app", "batch", "browser", "capture", "click", "clipboard", "dialog", "dock", "done",
+        "drag", "image", "inspect_ui", "menu", "move", "need_info", "paste", "permissions", "press", "scroll", "see",
         "set_value", "select_text", "sleep", "space", "type", "verify_state", "window",
     ]
 

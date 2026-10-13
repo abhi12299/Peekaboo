@@ -61,7 +61,8 @@ public enum MCPToolCatalog {
 
     static func tools(context: MCPToolContext, selection: Selection) -> [any MCPTool] {
         let selectedNames = Set(selection.toolNames)
-        return self.unfilteredTools(context: context).filter { selectedNames.contains($0.name) }
+        return self.restrictingBatchSteps(
+            self.unfilteredTools(context: context).filter { selectedNames.contains($0.name) })
     }
 
     private static func filteredTools(
@@ -83,10 +84,18 @@ public enum MCPToolCatalog {
             filters: filters,
             log: log)
 
-        return ToolFiltering.applyInputStrategyAvailability(
+        return self.restrictingBatchSteps(ToolFiltering.applyInputStrategyAvailability(
             filteredTools,
             policy: inputPolicy,
-            log: log)
+            log: log))
+    }
+
+    /// `batch` may only run the tools that survived filtering, so a disabled tool stays disabled inside it.
+    private static func restrictingBatchSteps(_ tools: [any MCPTool]) -> [any MCPTool] {
+        let names = Set(tools.map(\.name))
+        return tools.map { tool in
+            (tool as? BatchTool)?.restrictingSteps(to: names) ?? tool
+        }
     }
 
     public static func unfilteredTools(context: MCPToolContext) -> [any MCPTool] {
@@ -112,6 +121,7 @@ public enum MCPToolCatalog {
             PressTool(context: context),
             DragTool(context: context),
             MoveTool(context: context),
+            BatchTool(context: context),
 
             // App management tools
             AppTool(context: context),

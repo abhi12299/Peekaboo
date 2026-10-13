@@ -82,7 +82,8 @@ enum MCPToolCaptureRequirement: Sendable, Equatable {
             .requestedFinalScreenshot
         case "analyze", "browser", "permissions", "sleep", "inspect_ui", "click", "type", "set_value", "select_text",
              "action", "scroll", "press", "drag", "move", "app", "window", "menu", "clipboard", "paste",
-             "agent", "dock", "dialog", "space":
+             "agent", "dock", "dialog", "space", "batch":
+            // A batch captures nothing itself; each step, including a final `see`, is classified on dispatch.
             .never
         default:
             nil
@@ -447,8 +448,8 @@ enum MCPToolSnapshotMutationPolicy {
             self.browserEffect(arguments: arguments)
         case "permissions":
             arguments.getString("action") == "request" ? .mutation : MCPToolSnapshotEffect.none
-        case "agent":
-            // Nested agent tools acquire this gate themselves; locking the outer call would deadlock.
+        case "agent", "batch":
+            // Nested agent tools and batch steps acquire this gate themselves; locking the outer call would deadlock.
             MCPToolSnapshotEffect.none
         case "analyze", "sleep":
             MCPToolSnapshotEffect.none

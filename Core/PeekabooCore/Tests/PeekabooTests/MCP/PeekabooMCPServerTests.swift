@@ -154,7 +154,7 @@ struct PeekabooMCPServerTests {
         let server = try await makeServer()
         let names = await server.registeredToolNamesForTesting()
 
-        #expect(names.count == 26)
+        #expect(names.count == 27)
         #expect(names == names.sorted())
         #expect(names.contains("capture"))
         #expect(names.contains("image"))
@@ -730,7 +730,7 @@ struct PeekabooMCPServerTests {
 
         do {
             let (tools, _) = try await session.client.listTools()
-            #expect(tools.count == 26)
+            #expect(tools.count == 27)
 
             for (index, tool) in tools.sorted(by: { $0.name < $1.name }).enumerated() {
                 guard case let .object(schema) = tool.inputSchema else {
