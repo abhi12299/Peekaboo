@@ -990,6 +990,11 @@ extension MCPToolContext {
                 detectionResult: detectionResult)
         } catch is CancellationError {
             throw CancellationError()
+        } catch let changed as SnapshotWindowFrameChanged {
+            try Task.checkCancellation()
+            return refused(self.executionPolicy.unresolvedTargetRejection(
+                toolName: toolName,
+                detail: changed.description))
         } catch {
             try Task.checkCancellation()
             return refused(self.executionPolicy.unresolvedTargetRejection(

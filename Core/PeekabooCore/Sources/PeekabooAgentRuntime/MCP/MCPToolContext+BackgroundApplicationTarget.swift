@@ -90,9 +90,38 @@ extension MCPToolContext {
                 additionalEvidence: [.init(target: mirroredIdentity)],
                 applicationName: mirroredReceipt.applicationName).receipt.requireIdentity()
         }
-        let authority = try await self.receiptBoundMutationAuthority(for: identity)
+        let authority: DesktopTargetPlanning.ReceiptBoundMutationAuthorityPlan
+        do {
+            authority = try await self.receiptBoundMutationAuthority(for: identity)
+        } catch DesktopTargetIdentityError.contradictoryWindowBounds {
+            // Window ID, PID and process generation already agree (they are checked before bounds), so only the
+            // live frame differs, e.g. while a just-launched app settles its window. Read it once more before
+            // refusing; a frame that still differs is refused as before.
+            try await Task.sleep(for: Self.windowFrameSettleDelay)
+            do {
+                authority = try await self.receiptBoundMutationAuthority(for: identity)
+            } catch DesktopTargetIdentityError.contradictoryWindowBounds {
+                throw SnapshotWindowFrameChanged(
+                    windowID: identity.exactWindow?.identity.windowID,
+                    snapshotID: snapshotID)
+            }
+        }
         return AuthorizedDesktopTargetPlan(mutationAuthority: authority)
     }
+
+    /// The snapshot's window is still the same window of the same process, but its live frame no longer matches.
+    struct SnapshotWindowFrameChanged: Error, CustomStringConvertible {
+        let windowID: Int?
+        let snapshotID: String
+
+        var description: String {
+            "window \(self.windowID.map(String.init) ?? "?") moved or resized after snapshot '\(self.snapshotID)' " +
+                "was taken; run `see` again and use the new snapshot"
+        }
+    }
+
+    /// Pause before re-reading a live window frame that disagreed with its snapshot.
+    static let windowFrameSettleDelay: Duration = .milliseconds(250)
 
     @MainActor
     func receiptBoundMutationAuthority(
