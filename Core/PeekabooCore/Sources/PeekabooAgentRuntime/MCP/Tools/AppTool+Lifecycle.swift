@@ -70,8 +70,11 @@ extension AppToolActions {
             "\(AgentDisplayTokens.Status.success) Launched \(app.name) "
                 + "(PID: \(app.processIdentifier)) in \(timing)"
         }
+        let minimizedHint = request.waitForWindow && !openedDocuments
+            ? await self.minimizedWindowHint(for: app)
+            : nil
         return try self.buildResponse(
-            message: message,
+            message: minimizedHint.map { "\(message). \($0)" } ?? message,
             app: app,
             startTime: request.startTime,
             extraMeta: [

@@ -28,6 +28,19 @@ extension AppToolActions {
             preferredWindowIDs: app.windowIDs ?? [])
     }
 
+    /// One sentence when every window of the app is minimized, which `see` cannot capture. The window is
+    /// left minimized: restoring it would change the user's screen. A failed read says nothing.
+    func minimizedWindowHint(for app: ServiceApplicationInfo) async -> String? {
+        guard let windows = try? await self.service.listWindows(
+            for: "PID:\(app.processIdentifier)",
+            timeout: nil).data.windows,
+            !windows.isEmpty,
+            windows.allSatisfy(\.isMinimized)
+        else { return nil }
+        let subject = windows.count == 1 ? "\(app.name)'s window is" : "All of \(app.name)'s windows are"
+        return "\(subject) minimized; use `window restore` before `see`."
+    }
+
     /// Matches each document's file name against window titles: an exact title (with or without the
     /// extension) beats a title that only starts with the name ("result.txt — Edited"). Windows the launch
     /// reported as new come first. Each window names at most one document.
