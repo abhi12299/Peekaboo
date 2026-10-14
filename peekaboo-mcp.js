@@ -19,9 +19,18 @@ const SHUTDOWN_TIMEOUT_MS = 5000;
 export class PeekabooMCPWrapper {
   constructor(options = {}) {
     this.binaryPath = options.binaryPath || defaultBinaryPath;
-    this.initialDelayMs = options.initialDelayMs || INITIAL_DELAY_MS;
-    this.maxDelayMs = options.maxDelayMs || MAX_DELAY_MS;
+    this.initialDelayMs = options.initialDelayMs ?? INITIAL_DELAY_MS;
+    this.maxDelayMs = options.maxDelayMs ?? MAX_DELAY_MS;
     this.shutdownTimeoutMs = options.shutdownTimeoutMs ?? SHUTDOWN_TIMEOUT_MS;
+    for (const [name, value] of Object.entries({
+      initialDelayMs: this.initialDelayMs,
+      maxDelayMs: this.maxDelayMs,
+      shutdownTimeoutMs: this.shutdownTimeoutMs
+    })) {
+      if (!Number.isFinite(value) || value < 0 || value > 2_147_483_647) {
+        throw new RangeError(`${name} must be a finite nonnegative timer duration`);
+      }
+    }
     this.restartTimestamps = [];
     this.delay = this.initialDelayMs;
     this.child = null;
@@ -31,7 +40,7 @@ export class PeekabooMCPWrapper {
   }
 
   start() {
-    if (this.shuttingDown) return;
+    if (this.shuttingDown || this.child || this.restartTimer) return;
 
     if (!existsSync(this.binaryPath)) {
       console.error(`[Peekaboo MCP] Binary not found at ${this.binaryPath}`);
@@ -57,7 +66,7 @@ export class PeekabooMCPWrapper {
     this.child.on('exit', (code, signal) => {
       this.clearShutdownTimer();
       this.child = null;
-      if (this.shuttingDown) return process.exit(code || 0);
+      if (this.shuttingDown) return process.exit(code || process.exitCode || 0);
 
       if (code === 0 || signal === 'SIGINT' || signal === 'SIGTERM') {
         console.error('[Peekaboo MCP] Server exited cleanly');
@@ -145,11 +154,16 @@ if (isMainModule()) {
 
   process.on('uncaughtException', (err) => {
     console.error('[Peekaboo MCP] Uncaught exception:', err);
+    process.exitCode = 1;
     wrapper.shutdown();
+    if (!wrapper.child) process.exit(1);
   });
 
   process.on('unhandledRejection', (reason) => {
     console.error('[Peekaboo MCP] Unhandled rejection:', reason);
+    process.exitCode = 1;
+    wrapper.shutdown();
+    if (!wrapper.child) process.exit(1);
   });
 }
 

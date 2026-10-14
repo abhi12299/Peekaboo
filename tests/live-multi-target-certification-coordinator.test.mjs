@@ -102,7 +102,62 @@ function fakeCatalog() {
   };
 }
 
-const fakeMonitorSource = String.raw`#!/usr/bin/env node
+// The coordinator bounds each monitor one-shot with a fixed 15 s spawnSync. On a busy host a cold Node start, and
+// above all rename(2), can stall past it, so one-shots stay in sh and publish with one create (the coordinator reads
+// after exit). Only the polled, long-lived watch mode runs in Node. Shell `${...}` would be template interpolation.
+function fakeMonitorScript(nodeExecutable, watchModulePath) {
+  const shellQuote = (value) => `'${value.replaceAll(/'/g, String.raw`'\''`)}'`;
+  return String.raw`#!/bin/sh
+set -ef
+umask 077
+[ "$#" -gt 0 ] || exit 2
+case "$1" in
+  watch) exec ${shellQuote(nodeExecutable)} ${shellQuote(watchModulePath)} "$@" ;;
+  sample|process-identity|process-executable) mode=$1; shift ;;
+  *) exit 2 ;;
+esac
+pid=''
+output=''
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --pid) [ "$#" -ge 2 ] || exit 2; pid=$2; shift 2 ;;
+    --output) [ "$#" -ge 2 ] || exit 2; output=$2; shift 2 ;;
+    *) exit 2 ;;
+  esac
+done
+[ -n "$output" ] || exit 2
+case "$mode" in
+  sample)
+    {
+      printf '{"timestamp":%s,"frontmostPID":%s,"frontmostBundleIdentifier":"test.sentinel",' \
+        "$(date +%s)" "$FAKE_SENTINEL_PID"
+      printf '"frontmostWindowID":%s,"cursor":{"x":1,"y":2},"clipboardChangeCount":7,' "$FAKE_SENTINEL_WINDOW"
+      printf '"clipboardDigest":"${'7'.repeat(64)}","peekabooWindowIDs":[],'
+      printf '"visibleScreenFramesTopLeft":[{"x":0,"y":0,"width":1000,"height":700}]}\n'
+    } > "$output"
+    ;;
+  process-identity)
+    [ -n "$pid" ] || exit 2
+    startIdentity="$pid"00
+    if [ "$pid" = "$FAKE_SENTINEL_PID" ] && [ -n "$FAKE_FINAL_SENTINEL_START_IDENTITY" ]; then
+      case "$output" in
+        *final-sentinel*) startIdentity=$FAKE_FINAL_SENTINEL_START_IDENTITY ;;
+      esac
+    fi
+    printf '{"pid":%s,"startIdentity":"%s"}\n' "$pid" "$startIdentity" > "$output"
+    ;;
+  process-executable)
+    [ -n "$pid" ] || exit 2
+    # Native digest; "<hex> *<path>" is split without globbing (set -f).
+    digest=$(/usr/bin/openssl dgst -sha256 -r "$0")
+    set -- $digest
+    printf '{"pid":%s,"startIdentity":"%s00","path":"%s","sha256":"%s"}\n' "$pid" "$pid" "$0" "$1" > "$output"
+    ;;
+esac
+`;
+}
+
+const fakeMonitorWatchSource = String.raw`
 import { createHash } from 'node:crypto';
 import fs from 'node:fs';
 import net from 'node:net';
@@ -110,7 +165,7 @@ import process from 'node:process';
 
 process.umask(0o077);
 const args = process.argv.slice(2);
-const mode = args[0];
+if (args[0] !== 'watch') process.exit(2);
 const arg = (name) => args[args.indexOf(name) + 1];
 const write = (file, value) => {
   const temporary = file + '.tmp';
@@ -127,46 +182,6 @@ const aggregate = (domain, value) => createHash('sha256').update(Buffer.concat([
   Buffer.from('peekaboo.multi-target-certification.' + domain + '.v2\0'),
   Buffer.from(JSON.stringify(canonical(value))),
 ])).digest('hex');
-const fileSHA = (file) => createHash('sha256').update(fs.readFileSync(file)).digest('hex');
-if (mode === 'sample') {
-  write(arg('--output'), {
-    timestamp: Date.now() / 1000,
-    frontmostPID: Number(process.env.FAKE_SENTINEL_PID),
-    frontmostBundleIdentifier: 'test.sentinel',
-    frontmostWindowID: Number(process.env.FAKE_SENTINEL_WINDOW),
-    cursor: { x: 1, y: 2 },
-    clipboardChangeCount: 7,
-    clipboardDigest: '7'.repeat(64),
-    peekabooWindowIDs: [],
-    visibleScreenFramesTopLeft: [{ x: 0, y: 0, width: 1000, height: 700 }],
-  });
-  process.exit(0);
-}
-if (mode === 'process-identity') {
-  const pid = Number(arg('--pid'));
-  const outputPath = arg('--output');
-  const useFinalSentinelDrift = pid === Number(process.env.FAKE_SENTINEL_PID)
-    && outputPath.includes('final-sentinel')
-    && typeof process.env.FAKE_FINAL_SENTINEL_START_IDENTITY === 'string';
-  write(outputPath, {
-    pid,
-    startIdentity: useFinalSentinelDrift
-      ? process.env.FAKE_FINAL_SENTINEL_START_IDENTITY
-      : String(pid) + '00',
-  });
-  process.exit(0);
-}
-if (mode === 'process-executable') {
-  const pid = Number(arg('--pid'));
-  write(arg('--output'), {
-    pid,
-    startIdentity: String(pid) + '00',
-    path: process.argv[1],
-    sha256: fileSHA(process.argv[1]),
-  });
-  process.exit(0);
-}
-if (mode !== 'watch') process.exit(2);
 const output = arg('--output');
 const contamination = arg('--contamination-output');
 const ready = arg('--ready');
@@ -616,7 +631,8 @@ function fixture() {
   const crashes = path.join(root, 'crashes');
   fs.mkdirSync(runs, { mode: 0o700 });
   fs.mkdirSync(crashes, { mode: 0o700 });
-  const monitor = path.join(root, 'fake-monitor.mjs');
+  const monitor = path.join(root, 'fake-monitor.sh');
+  const monitorWatch = path.join(root, 'fake-monitor-watch.mjs');
   const controllerExecutable = path.join(root, 'fake-controller.mjs');
   const finalizer = path.join(root, 'fake-finalizer.mjs');
   const peekaboo = path.join(root, 'fake-peekaboo');
@@ -624,7 +640,8 @@ function fixture() {
   const finalizerLog = path.join(root, 'finalizer.log');
   const foregroundActivity = path.join(root, 'foreground-activity.json');
   const externalRestoreStarted = path.join(root, 'external-restore-started.json');
-  writeExecutable(monitor, fakeMonitorSource);
+  fs.writeFileSync(monitorWatch, fakeMonitorWatchSource, { mode: 0o600 });
+  writeExecutable(monitor, fakeMonitorScript(process.execPath, monitorWatch));
   writeExecutable(controllerExecutable, fakeControllerSource);
   writeExecutable(finalizer, fakeFinalizerSource);
   writeExecutable(peekaboo, '#!/bin/sh\nexit 0\n');
@@ -670,8 +687,10 @@ function fixture() {
       interval_milliseconds: 10,
       code_signature_hash: 'a'.repeat(40),
     },
-    external_foreground_timeout_seconds: 5,
-    operation_timeout_seconds: 65,
+    // Live runs make this test process the external operator. The 5-second product minimum is measured from the
+    // monitor fence and a nice'd release preflight overran it, so only window-free tests use that minimum.
+    external_foreground_timeout_seconds: 30,
+    operation_timeout_seconds: 140,
     test_runtime: {
       catalog_path: catalogPath,
       finalizer_path: finalizer,
@@ -989,6 +1008,7 @@ test('duplicate exact physical targets fail before child launch', () => {
 test('operation timeout covers typing, both external windows, and lifecycle overhead', () => {
   const fix = fixture();
   try {
+    fix.plan.external_foreground_timeout_seconds = 5;
     fix.plan.operation_timeout_seconds = 64;
     writePrivate(fix.planPath, fix.plan);
     const run = spawnSync(process.execPath, [coordinator, '--plan', fix.planPath], {
@@ -1294,11 +1314,50 @@ stdout.write = (chunk, ...args) => {
       )));
       const characterCount = [...controllerPlan.type_text].length;
       const typingDurationMilliseconds = characterCount * controllerPlan.typing_delay_milliseconds;
+      assert.equal(characterCount, 1000);
+      assert.equal(Buffer.byteLength(controllerPlan.type_text, 'utf8'), 1000);
+      assert.equal(controllerPlan.typing_delay_milliseconds, 50);
+      assert.ok(controllerPlan.type_text.startsWith(
+        `peekaboo-certification-background:${completion.execution_nonce}:${controllerID}:`,
+      ));
+      assert.equal(typingDurationMilliseconds, 50_000);
+      assert.equal(
+        fix.plan.operation_timeout_seconds * 1000,
+        typingDurationMilliseconds
+          + (2 * fix.plan.external_foreground_timeout_seconds * 1000)
+          + 30_000,
+      );
+    }
+  } finally {
+    fs.rmSync(fix.root, { recursive: true, force: true });
+  }
+});
+
+test('minimum 5-second external windows accept the exact operation budget with bounded typing', async () => {
+  const fix = fixture();
+  try {
+    fix.plan.external_foreground_timeout_seconds = 5;
+    fix.plan.operation_timeout_seconds = 65;
+    // Stop at the baseline sentinel: controller plans exist, but no live window can race host scheduling.
+    fix.plan.monitor.sentinel.start_identity = `${SENTINEL_PID}99`;
+    writePrivate(fix.planPath, fix.plan);
+    const run = await runInteractive(fix);
+    assert.notEqual(run.code, 0);
+    assert.match(run.stderr, /baseline sentinel process generation differs from the exact plan/);
+    assert.equal(run.events.some((event) => event.event === 'external-foreground-window'), false);
+    const failed = run.events.at(-1);
+    assert.equal(failed.event, 'failed');
+    for (const controllerID of ['controller-a', 'controller-b']) {
+      const controllerPlan = JSON.parse(fs.readFileSync(path.join(
+        failed.run_root, 'controllers', controllerID, 'plan.json',
+      )));
+      const characterCount = [...controllerPlan.type_text].length;
+      const typingDurationMilliseconds = characterCount * controllerPlan.typing_delay_milliseconds;
       assert.equal(characterCount, 500);
       assert.equal(Buffer.byteLength(controllerPlan.type_text, 'utf8'), 500);
       assert.equal(controllerPlan.typing_delay_milliseconds, 50);
       assert.ok(controllerPlan.type_text.startsWith(
-        `peekaboo-certification-background:${completion.execution_nonce}:${controllerID}:`,
+        `peekaboo-certification-background:${failed.execution_nonce}:${controllerID}:`,
       ));
       assert.equal(typingDurationMilliseconds, 25_000);
       assert.equal(

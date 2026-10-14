@@ -141,14 +141,13 @@ const allPages = allMarkdown(docsDir).map((file) => {
   const rel = path.relative(docsDir, file).replaceAll(path.sep, "/");
   const raw = fs.readFileSync(file, "utf8");
   const { frontmatter, body } = parseFrontmatter(raw);
-  const cleaned = stripStrayDirectives(body);
-  const title = frontmatter.title || firstHeading(cleaned) || titleize(path.basename(rel, ".md"));
+  const title = frontmatter.title || firstHeading(body) || titleize(path.basename(rel, ".md"));
   return {
     file,
     rel,
     title,
     outRel: outPath(rel, frontmatter),
-    markdown: cleaned,
+    markdown: body,
     frontmatter,
   };
 });
@@ -235,15 +234,6 @@ function parseFrontmatter(raw) {
     fm[m[1]] = value;
   }
   return { frontmatter: fm, body: raw.slice(match[0].length) };
-}
-
-function stripStrayDirectives(body) {
-  return body
-    .replace(/\r\n/g, "\n")
-    .split("\n")
-    .filter((line) => !/^\s*\{:\s*[^}]*\}\s*$/.test(line))
-    .map((line) => line.replace(/\s*\{:\s*[^}]*\}\s*$/, ""))
-    .join("\n");
 }
 
 function allMarkdown(dir) {
@@ -339,22 +329,23 @@ function markdownToHtml(markdown, currentRel, nested = false) {
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const fenceMatch = line.match(/^\s{0,3}```([\w+-]+)?\s*$/);
-    if (fenceMatch) {
-      flushParagraph();
-      closeList();
-      flushBlockquote();
-      if (fence) {
+    const fenceMatch = line.match(/^\s{0,3}(`{3,}|~{3,})(.*)$/);
+    if (fence) {
+      if (fenceMatch && fenceMatch[1][0] === fence.marker[0] &&
+          fenceMatch[1].length >= fence.marker.length && !fenceMatch[2].trim()) {
         const body = highlightCode(fence.lines.join("\n"), fence.lang);
         html.push(`<pre><code class="language-${escapeAttr(fence.lang)}">${body}</code></pre>`);
         fence = null;
       } else {
-        fence = { lang: fenceMatch[1] || "text", lines: [] };
+        fence.lines.push(line);
       }
       continue;
     }
-    if (fence) {
-      fence.lines.push(line);
+    if (fenceMatch && !(fenceMatch[1][0] === "`" && fenceMatch[2].includes("`"))) {
+      flushParagraph();
+      closeList();
+      flushBlockquote();
+      fence = { marker: fenceMatch[1], lang: fenceMatch[2].trim().split(/\s+/)[0] || "text", lines: [] };
       continue;
     }
     if (/^>\s?/.test(line)) {
@@ -425,16 +416,17 @@ function markdownToHtml(markdown, currentRel, nested = false) {
       continue;
     }
     const bullet = line.match(/^\s*-\s+(.+)$/);
-    const numbered = line.match(/^\s*\d+\.\s+(.+)$/);
+    const numbered = line.match(/^\s*(\d+)\.\s+(.+)$/);
     if (bullet || numbered) {
       flushParagraph();
       const tag = bullet ? "ul" : "ol";
       if (list && list !== tag) closeList();
       if (!list) {
         list = tag;
-        html.push(`<${tag}>`);
+        const start = numbered && numbered[1] !== "1" ? ` start="${numbered[1]}"` : "";
+        html.push(`<${tag}${start}>`);
       }
-      html.push(`<li>${inline((bullet || numbered)[1], currentRel)}</li>`);
+      html.push(`<li>${inline(bullet ? bullet[1] : numbered[2], currentRel)}</li>`);
       continue;
     }
     paragraph.push(line.trim());
@@ -473,24 +465,33 @@ function uniqueHeadingIDs(html) {
   });
 }
 
-function inline(text, currentRel) {
-  const stash = [];
-  let out = text.replace(/`([^`]+)`/g, (_, code) => {
-    stash.push(`<code>${escapeHtml(code)}</code>`);
+function inline(text, currentRel, inheritedStash = []) {
+  const stash = [...inheritedStash];
+  let out = text.replace(/`([^`]+)`/g, (raw, code) => {
+    stash.push({ html: `<code>${escapeHtml(code)}</code>`, raw });
+    return `\u0000${stash.length - 1}\u0000`;
+  });
+  out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (raw, label, href) => {
+    const destination = href
+      .replace(/\u0000(\d+)\u0000/g, (_, i) => stash[Number(i)].raw)
+      .replace(/\\\|/g, "|");
+    stash.push({ html: `<a href="${escapeAttr(rewriteHref(destination, currentRel))}">${inline(label, currentRel, stash)}</a>`, raw });
+    return `\u0000${stash.length - 1}\u0000`;
+  });
+  out = out.replace(/<(https?:\/\/[^\s<>]+)>/g, (raw, href) => {
+    const destination = href
+      .replace(/\u0000(\d+)\u0000/g, (_, i) => stash[Number(i)].raw)
+      .replace(/\\\|/g, "|");
+    stash.push({ html: `<a href="${escapeAttr(destination)}">${escapeHtml(destination)}</a>`, raw });
     return `\u0000${stash.length - 1}\u0000`;
   });
   out = escapeHtml(out)
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/(^|[^*])\*([^*\s][^*]*?)\*(?!\*)/g, "$1<em>$2</em>")
-    .replace(/(^|[^_])_([^_\s][^_]*?)_(?!_)/g, "$1<em>$2</em>")
-    .replace(
-      /\[([^\]]+)\]\(([^)]+)\)/g,
-      (_, label, href) => `<a href="${escapeAttr(rewriteHref(decodeRenderedEntities(href), currentRel))}">${label}</a>`,
-    )
-    .replace(/&lt;(https?:\/\/[^\s<>]+)&gt;/g, '<a href="$1">$1</a>');
+    .replace(/(^|[^_])_([^_\s][^_]*?)_(?!_)/g, "$1<em>$2</em>");
   out = out.replace(/\\\|/g, "|");
   out = out.replace(/&lt;br&gt;/g, "<br>");
-  return out.replace(/\u0000(\d+)\u0000/g, (_, i) => stash[Number(i)]);
+  return out.replace(/\u0000(\d+)\u0000/g, (_, i) => stash[Number(i)].html);
 }
 
 function rewriteHref(href, currentRel) {

@@ -51,9 +51,9 @@ peekaboo see --app Finder --json
 
 That is the core loop: observe the current screen, choose an element from the result, and act on it.
 
-## What's new in 4.8.0
+## What's new in 4.9.3
 
-Peekaboo 4.8.0 adds exact-window background drag, text selection (`select-text`), and coordinate scrolling (`scroll --at`) to the CLI and MCP, and makes background rich paste work in freshly launched windows while fencing it against concurrent clipboard changes. Background scrolling now reaches Safari, `see --fresh` takes uncached Accessibility reads on request, observations report date-valued controls, and capture recovers when slow startup safety checks finish late. These background actions and fresh reads need the matching 4.8.0 Peekaboo app as the Bridge host; see the changelog Compatibility notes.
+Peekaboo 4.9.3 is a fix release. Manual `peekaboo daemon start` now waits as long as automatic startup and reports the real authentication or probe failure instead of a generic "did not become ready" timeout, agent tool results stay readable when they contain backslashes or newlines, and the `peekaboo-mcp` wrapper exits with an error after fatal failures instead of looking healthy. 4.9.2 shipped Peekaboo.app as a universal app for Intel Macs; see the changelog for both releases.
 
 ## Automate an app
 

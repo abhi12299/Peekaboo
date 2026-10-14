@@ -24,7 +24,6 @@ import {
   validateSourceDocumentationContracts,
   validateVersionConsistency
 } from './release-preflight-contract.mjs';
-import { validateTrackedReleaseNotes } from './release-driver-contract.mjs';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -391,19 +390,6 @@ function checkChangelog() {
     });
     if (failures.length > 0) {
       failures.forEach((failure) => logError(`${relativePath}: ${failure}`));
-      return false;
-    }
-  }
-
-  if (!dryRun) {
-    try {
-      validateTrackedReleaseNotes({
-        changelog: readFileSync(join(projectRoot, 'CHANGELOG.md'), 'utf8'),
-        notes: readFileSync(join(projectRoot, 'release', 'release-notes.md'), 'utf8'),
-        version,
-      });
-    } catch (error) {
-      logError(`release/release-notes.md: ${error.message}`);
       return false;
     }
   }
@@ -842,7 +828,7 @@ async function main() {
   }
 
   console.log(`\n${colors.green}${colors.bright}✅ All checks passed! Ready for the release workflow. 🎉${colors.reset}\n`);
-  console.log(`Follow docs/RELEASING.md and run scripts/release-binaries.sh with the intended publish flags.`);
+  console.log(`Follow docs/RELEASING.md and dispatch the hosted release rehearsal.`);
   console.log(`This preflight does not tag, publish, notarize, or create a GitHub release.\n`);
 }
 
