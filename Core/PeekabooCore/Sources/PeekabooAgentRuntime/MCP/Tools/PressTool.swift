@@ -257,8 +257,25 @@ public struct PressTool: MCPTool, MCPWindowObservingTool {
                 snapshotID: arguments.getString("snapshot"))
         } catch {
             self.logger.error("Press execution failed: \(error.localizedDescription)")
-            return ToolResponse.error(error.localizedDescription)
+            guard !(error is CancellationError) else { return ToolResponse.error(error.localizedDescription) }
+            return Self.unknownFailureResponse(error, chords: try? Self.parseChords(arguments: arguments))
         }
+    }
+
+    /// A plain error from the host does not say whether a key reached the app, so it is reported as a canonical
+    /// indeterminate outcome that keeps the cause, instead of a bare error without result semantics.
+    private static func unknownFailureResponse(_ error: any Error, chords: [KeyboardChord]?) -> ToolResponse {
+        let display = chords.map { $0.map(\.displayValue).joined(separator: " → ") } ?? "the key press"
+        let failure = DesktopActionFailure.indeterminate(
+            delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
+            evidence: .completionUnknown,
+            message: "Press \(display) may not have been delivered: \(error.localizedDescription)",
+            hint: "Observe the target window before retrying.",
+            causeDescription: error.localizedDescription)
+        return (try? MCPToolResponseMetadataProjector.errorResponse(
+            for: failure,
+            invalidatedSnapshotID: nil,
+            additionalFields: [:])) ?? ToolResponse.error(failure.message)
     }
 
     @MainActor

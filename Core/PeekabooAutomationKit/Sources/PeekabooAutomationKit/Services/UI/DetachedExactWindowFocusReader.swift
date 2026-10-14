@@ -338,34 +338,24 @@ enum DetachedExactWindowFocusReader {
         case let .failure(error): return .failure(error)
         }
 
-        var queue = [window]
-        var visited: [AXUIElement] = []
-        var roleAndFrameMatches: [AXUIElement] = []
-        var exactMatches: [AXUIElement] = []
-        var exactMatchFrames: [CGRect] = []
-        while let element = queue.first, visited.count < 4096 {
-            queue.removeFirst()
-            guard !visited.contains(where: { CFEqual($0, element) }) else { continue }
-            visited.append(element)
-            AXUIElementSetMessagingTimeout(element, self.messagingTimeout)
-
-            if let candidate = self.candidateIdentity(
-                observedRole: self.stringAttribute(kAXRoleAttribute as String, of: element),
-                expected: expected,
-                phase: phase,
-                frame: self.frame(of: element),
-                metadata: (
-                    title: self.stringAttribute(kAXTitleAttribute as String, of: element),
-                    identifier: self.stringAttribute(kAXIdentifierAttribute as String, of: element)))
-            {
-                roleAndFrameMatches.append(element)
-                if FocusedElementReceiptResolver.matches(candidate, expected: expected, phase: phase) {
-                    exactMatches.append(element)
-                    exactMatchFrames.append(candidate.frame)
-                }
-            }
-            queue.append(contentsOf: self.elementArrayAttribute(kAXChildrenAttribute, of: element))
-        }
+        let scan = self.scanReceivers(
+            window: window,
+            focusedElement: self.focusedElementReference(of: application),
+            expected: expected,
+            phase: phase,
+            same: { CFEqual($0, $1) },
+            role: { element in
+                AXUIElementSetMessagingTimeout(element, self.messagingTimeout)
+                return self.stringAttribute(kAXRoleAttribute as String, of: element)
+            },
+            frame: { self.frame(of: $0) },
+            metadata: { element in (
+                title: self.stringAttribute(kAXTitleAttribute as String, of: element),
+                identifier: self.stringAttribute(kAXIdentifierAttribute as String, of: element)) },
+            children: { self.elementArrayAttribute(kAXChildrenAttribute, of: $0) })
+        let roleAndFrameMatches = scan.roleAndFrameMatches
+        let exactMatches = scan.exactMatches
+        let exactMatchFrames = scan.exactMatchFrames
 
         // A window whose AX tree exceeds the visit cap can still yield a unique focused match in the
         // scanned prefix; receiver selection below disambiguates matches among what was seen. Do not
@@ -425,6 +415,60 @@ enum DetachedExactWindowFocusReader {
             title: self.stringAttribute(kAXTitleAttribute as String, of: element),
             identifier: self.stringAttribute(kAXIdentifierAttribute as String, of: element),
             nativeElement: RetainedFocusElement(element: element)))
+    }
+
+    struct ReceiverScan<Node> {
+        var roleAndFrameMatches: [Node] = []
+        var exactMatches: [Node] = []
+        var exactMatchFrames: [CGRect] = []
+    }
+
+    /// Candidate receivers for a focused-element receipt: the target window's AX tree, then the app's own
+    /// focused element. Some apps (Calculator's input view) report a focused element that no parent lists
+    /// among its children, so the tree walk alone never reaches it. The caller still requires AXFocused and
+    /// the owning window for whichever candidate it selects.
+    static func scanReceivers<Node>(
+        window: Node,
+        focusedElement: Node?,
+        expected: FocusedElementIdentity,
+        phase: KeyboardFocusValidationPhase,
+        same: (Node, Node) -> Bool,
+        role: (Node) -> String?,
+        frame: (Node) -> CGRect?,
+        metadata: (Node) -> (title: String?, identifier: String?),
+        children: (Node) -> [Node]) -> ReceiverScan<Node>
+    {
+        var scan = ReceiverScan<Node>()
+        var queue = [window]
+        var visited: [Node] = []
+        func consider(_ element: Node) -> Bool {
+            guard !visited.contains(where: { same($0, element) }) else { return false }
+            visited.append(element)
+            if let candidate = self.candidateIdentity(
+                observedRole: role(element),
+                expected: expected,
+                phase: phase,
+                frame: frame(element),
+                metadata: metadata(element))
+            {
+                scan.roleAndFrameMatches.append(element)
+                if FocusedElementReceiptResolver.matches(candidate, expected: expected, phase: phase) {
+                    scan.exactMatches.append(element)
+                    scan.exactMatchFrames.append(candidate.frame)
+                }
+            }
+            return true
+        }
+        while let element = queue.first, visited.count < 4096 {
+            queue.removeFirst()
+            if consider(element) {
+                queue.append(contentsOf: children(element))
+            }
+        }
+        if let focusedElement {
+            _ = consider(focusedElement)
+        }
+        return scan
     }
 
     static func targetWindow(

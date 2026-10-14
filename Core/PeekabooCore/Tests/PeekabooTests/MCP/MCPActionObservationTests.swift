@@ -145,6 +145,34 @@ struct MCPActionObservationTests {
     }
 
     @Test
+    func `a press that fails with a plain host error reports a canonical outcome with its cause`() async throws {
+        let fixture = try await MCPSnapshotMutationTestFixture.make()
+        // What the host throws when its focused-element receipt check fails, e.g. for Calculator's input view.
+        fixture.automation.mutationError = PeekabooError.invalidInput(
+            field: "target",
+            reason: "Exact focused-element receipt is stale: frame mismatch.")
+        let see = ObservationProbe(response: ToolResponse.text("observed window"))
+
+        let response = try await fixture.context.execute(
+            tool: PressTool(context: fixture.context).observing(with: see),
+            arguments: ToolArguments(raw: ["snapshot": fixture.snapshotID, "key": "q", "modifiers": ["cmd"]]))
+
+        #expect(response.isError)
+        let text = Self.text(response)
+        #expect(text.contains("may not have been delivered"), "\(text)")
+        #expect(text.contains("Exact focused-element receipt is stale"), "\(text)")
+        #expect(!text.contains("without valid canonical result semantics"))
+        guard case let .valid(projection) =
+            MCPToolResponseMetadataProjector.actionOutcomeResolution(from: response.meta)
+        else {
+            Issue.record("Expected a valid canonical outcome, got \(String(describing: response.meta))")
+            return
+        }
+        #expect(projection.outcome.state == .indeterminate)
+        #expect(see.log.arguments.isEmpty)
+    }
+
+    @Test
     func `a failed observation of a window that is still open is appended without failing the action`() async throws {
         let fixture = try await MCPSnapshotMutationTestFixture.make()
         fixture.automation.uiAutomationOutcomeScript.setDefaultOutcome(Self.unverified)
