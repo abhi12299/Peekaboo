@@ -7,9 +7,10 @@ import PeekabooFoundation
 import TachikomaMCP
 
 /// MCP tool for clicking UI elements
-public struct ClickTool: MCPTool {
+public struct ClickTool: MCPTool, MCPWindowObservingTool {
     private let logger = os.Logger(subsystem: "boo.peekaboo.mcp", category: "ClickTool")
     private let context: MCPToolContext
+    var actionObservation = MCPActionObservation()
 
     public let name = "click"
 
@@ -66,6 +67,7 @@ public struct ClickTool: MCPTool {
                     Background coordinate clicks must provide a nonempty ID from a fresh exact-window see.
                     """,
                     minLength: 1),
+                MCPActionObservation.argumentName: MCPActionObservation.schemaProperty,
                 "wait_for": SchemaBuilder.number(
                     description: """
                     Optional. Maximum milliseconds to re-observe the selected exact window until a query matches.

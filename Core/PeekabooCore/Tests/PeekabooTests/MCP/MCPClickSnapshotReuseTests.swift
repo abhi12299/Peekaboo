@@ -68,7 +68,10 @@ struct MCPClickSnapshotReuseTests {
     private static func click(_ fixture: MCPSnapshotMutationTestFixture) async throws -> ToolResponse {
         try await fixture.context.execute(
             tool: ClickTool(context: fixture.context),
-            arguments: ToolArguments(raw: ["snapshot": fixture.snapshotID, "on": "T1", "wait_for": 0]))
+            // The click's own text; its follow-up `see` is covered by MCPActionObservationTests.
+            arguments: ToolArguments(raw: [
+                "snapshot": fixture.snapshotID, "on": "T1", "wait_for": 0, "observe_after": false,
+            ]))
     }
 
     private static func unverified(_ mechanism: DesktopActionOutcome.Delivery.Mechanism) -> DesktopActionOutcome {

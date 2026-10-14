@@ -7,9 +7,10 @@ import PeekabooFoundation
 import TachikomaMCP
 
 /// MCP tool for pressing keyboard chords and chord sequences.
-public struct PressTool: MCPTool {
+public struct PressTool: MCPTool, MCPWindowObservingTool {
     private let logger = os.Logger(subsystem: "boo.peekaboo.mcp", category: "PressTool")
     private let context: MCPToolContext
+    var actionObservation = MCPActionObservation()
     private let readEnvironment: @Sendable (String) -> String?
 
     public let name = "press"
@@ -73,6 +74,7 @@ public struct PressTool: MCPTool {
                 minimum: 0,
                 maximum: 10000,
                 default: 50),
+            MCPActionObservation.argumentName: MCPActionObservation.schemaProperty,
             "snapshot": SchemaBuilder.string(
                 description: backgroundOnly
                     ? "Required fresh exact non-dialog snapshot for receipt-pinned background press."

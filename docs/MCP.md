@@ -381,6 +381,14 @@ Verify with one observation at the end. The canonical `requires_fresh_observatio
 click. Pointer-routed clicks, other click variants, key presses, typing, drags, scrolls, and every indeterminate
 outcome still require a fresh `see` before the next mutation.
 
+`click`, `type`, `press`, `scroll`, `paste`, and `drag` verify unverified delivery in the same call: when the call
+names its window (a `snapshot`, a `coordinate_reference`, or `window_id`) and `observe_after` is omitted, the tool runs
+`see` on that window after the action and appends the result, and the text says the observation below verifies it.
+`observe_after: false` turns this off; `true` observes even a verified action. A failed observation never fails the
+action; if the action closed the window, one line says the window is no longer open and names a dialog the app now
+shows. Inside `batch` the step tools do not observe on their own; the batch observes once. `select_text` and
+`set_value` are always verified (or fail), so they take no `observe_after`.
+
 Successful `type` responses preserve the typing result's `target_identity` and `target_receipt` in public `_meta`,
 including ordinary and pixel-focus typing. Process identities retain the generation as a lossless decimal string;
 exact-window identities also retain the window ID. Missing result identity, including untargeted foreground typing,
@@ -489,7 +497,7 @@ background targeting, and outcome classification.
 - **Errors:** the batch stops at the first failed step. The response lists each step as `ok`, `unverified`, or
   `error`, and says which steps ran and which did not. The call is an error only if a step failed.
 - **Unverified steps:** a step that was delivered but could not be verified counts as done and the batch continues.
-  Observe the target once afterward instead of retrying blindly.
+  Step tools do not observe on their own inside a batch (a step's `observe_after` is ignored); see `observe_after`.
 - **`observe_after`:** `true` runs `see` on the window of the batch's first snapshot; an object is used as the `see`
   arguments (for example `{"app_target": "Calculator"}`). The result is appended to the batch output. It is skipped
   when a step fails. When it is omitted and every step ran but at least one is unverified, the batch observes the

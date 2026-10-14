@@ -7,9 +7,10 @@ import PeekabooFoundation
 import TachikomaMCP
 
 /// MCP tool for typing text
-public struct TypeTool: MCPTool {
+public struct TypeTool: MCPTool, MCPWindowObservingTool {
     private let logger = os.Logger(subsystem: "boo.peekaboo.mcp", category: "TypeTool")
     private let context: MCPToolContext
+    var actionObservation = MCPActionObservation()
 
     public let name = "type"
 
@@ -67,6 +68,7 @@ public struct TypeTool: MCPTool {
                 description: "Optional. Typing profile: linear (default) or human."),
             "wpm": SchemaBuilder.integer(
                 description: "Optional. Human typing speed (80-220 WPM). Overrides delay when set."),
+            MCPActionObservation.argumentName: MCPActionObservation.schemaProperty,
             "clear": SchemaBuilder.boolean(
                 description: "Optional. Clear before typing. Clear plus literal text can be confirmed by private " +
                     "non-secure AX value readback; clear=false typing remains unverifiable.",

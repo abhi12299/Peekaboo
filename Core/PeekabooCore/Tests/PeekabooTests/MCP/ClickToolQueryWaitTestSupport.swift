@@ -64,6 +64,8 @@ struct ClickQueryWaitFixture {
             "query": "LateControl",
             "snapshot": self.initialSnapshotID,
             "wait_for": waitFor,
+            // These tests count captures; the click's own follow-up `see` is covered by MCPActionObservationTests.
+            "observe_after": false,
         ]
         if !modifiers.isEmpty {
             arguments["foreground"] = true

@@ -9,9 +9,10 @@ import TachikomaMCP
 private typealias ToolScrollDirection = PeekabooFoundation.ScrollDirection
 
 /// MCP tool for scrolling UI elements or at current mouse position
-public struct ScrollTool: MCPTool {
+public struct ScrollTool: MCPTool, MCPWindowObservingTool {
     private let logger = os.Logger(subsystem: "boo.peekaboo.mcp", category: "ScrollTool")
     private let context: MCPToolContext
+    var actionObservation = MCPActionObservation()
 
     public let name = "scroll"
 
@@ -52,6 +53,7 @@ public struct ScrollTool: MCPTool {
                 "smooth": SchemaBuilder.boolean(
                     description: "Optional. Use smooth synthetic scrolling; requires foreground=true.",
                     default: false),
+                MCPActionObservation.argumentName: MCPActionObservation.schemaProperty,
                 "foreground": SchemaBuilder.boolean(
                     description: "Optional. Focus the target and allow global wheel events. Default: false.",
                     default: false),

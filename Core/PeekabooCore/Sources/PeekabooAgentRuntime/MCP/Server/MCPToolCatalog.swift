@@ -90,11 +90,18 @@ public enum MCPToolCatalog {
             log: log))
     }
 
-    /// `batch` may only run the tools that survived filtering, so a disabled tool stays disabled inside it.
+    /// `batch` may only run the tools that survived filtering, so a disabled tool stays disabled inside it; a
+    /// single input tool observes its window only when `see` survived.
     private static func restrictingBatchSteps(_ tools: [any MCPTool]) -> [any MCPTool] {
         let names = Set(tools.map(\.name))
         return tools.map { tool in
-            (tool as? BatchTool)?.restrictingSteps(to: names) ?? tool
+            if let batch = tool as? BatchTool {
+                return batch.restrictingSteps(to: names)
+            }
+            if !names.contains("see"), let observing = tool as? any MCPWindowObservingTool {
+                return observing.observing(with: nil)
+            }
+            return tool
         }
     }
 

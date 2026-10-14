@@ -9,9 +9,10 @@ import UniformTypeIdentifiers
 
 // swiftlint:disable type_body_length
 /// MCP tool for serialized temporary clipboard payloads and ownership-aware cleanup.
-public struct PasteTool: MCPTool {
+public struct PasteTool: MCPTool, MCPWindowObservingTool {
     private let logger = os.Logger(subsystem: "boo.peekaboo.mcp", category: "PasteTool")
     private let context: MCPToolContext
+    var actionObservation = MCPActionObservation()
     private let transactionGate: any ClipboardPasteTransactionGating
 
     public let name = "paste"
@@ -87,6 +88,7 @@ public struct PasteTool: MCPTool {
                 description: "Plain text. Background delivery leaves the clipboard untouched; a failure after " +
                     "dispatch begins is retry-unsafe because a prefix may already be present."),
         ]
+        properties[MCPActionObservation.argumentName] = MCPActionObservation.schemaProperty
         if foregroundCapable {
             properties["filePath"] = SchemaBuilder.string(
                 description: "Path to a file to paste (file bytes placed on clipboard).")

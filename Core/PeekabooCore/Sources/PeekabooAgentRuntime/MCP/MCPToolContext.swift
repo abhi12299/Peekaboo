@@ -333,8 +333,22 @@ public struct MCPToolContext: @unchecked Sendable {
 // MARK: - Tool execution and mutation lanes
 
 extension MCPToolContext {
+    /// Runs `tool`; an input tool whose delivery is unverified also observes its window (see
+    /// ``MCPWindowObservingTool``).
     @MainActor
     public func execute(
+        tool: any MCPTool,
+        arguments: ToolArguments) async throws -> ToolResponse
+    {
+        guard let observing = tool as? any MCPWindowObservingTool else {
+            return try await self.executeWithoutObservation(tool: tool, arguments: arguments)
+        }
+        return try await observing.actionObservation.execute(tool: tool, arguments: arguments, context: self)
+    }
+
+    /// Runs `tool` alone; `batch` runs its steps this way and observes once after the last one.
+    @MainActor
+    func executeWithoutObservation(
         tool: any MCPTool,
         arguments: ToolArguments) async throws -> ToolResponse
     {

@@ -6,9 +6,10 @@ import PeekabooFoundation
 import TachikomaMCP
 
 /// MCP tool for performing drag and drop operations between UI elements or coordinates
-public struct DragTool: MCPTool {
+public struct DragTool: MCPTool, MCPWindowObservingTool {
     let logger = os.Logger(subsystem: "boo.peekaboo.mcp", category: "DragTool")
     let context: MCPToolContext
+    var actionObservation = MCPActionObservation()
 
     public let name = "drag"
 
@@ -54,6 +55,7 @@ public struct DragTool: MCPTool {
                     description: "Optional. Mouse button to hold during drag.",
                     enum: ["left", "right"],
                     default: "left"),
+                MCPActionObservation.argumentName: MCPActionObservation.schemaProperty,
                 "foreground": SchemaBuilder.boolean(
                     description: "Optional. Confirm foreground use of the shared physical cursor. Default: false."),
             ],

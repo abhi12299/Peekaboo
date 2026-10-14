@@ -154,13 +154,15 @@ public struct BatchTool: MCPTool {
         case let .object(fields)?:
             seeArguments = ToolArguments(value: .object(fields))
         case .bool(true)?:
-            guard let snapshot, let windowID = await self.context.uiSnapshots.getSnapshot(id: snapshot)?.windowID
+            guard let windowArguments = await MCPActionObservation.windowSeeArguments(
+                snapshot: snapshot,
+                uiSnapshots: self.context.uiSnapshots)
             else {
                 return .failure(Refusal(
                     "observe_after: true needs a snapshot whose window is known; pass `see` arguments instead, " +
                         "for example {\"app_target\": \"Calculator\"}."))
             }
-            seeArguments = ToolArguments(raw: ["window_id": windowID])
+            seeArguments = windowArguments
         default:
             return .success(nil)
         }
@@ -193,7 +195,8 @@ public struct BatchTool: MCPTool {
                 }
                 stepArguments = Self.arguments(stepArguments, settingSnapshot: carriedSnapshot)
             }
-            let response = try await self.context.execute(tool: step.tool, arguments: stepArguments)
+            // The step tool does not observe on its own; the batch observes once after the last step.
+            let response = try await self.context.executeWithoutObservation(tool: step.tool, arguments: stepArguments)
             let report = StepReport(index: index, toolName: step.tool.name, response: response)
             reports.append(report)
             if report.status == .error {
@@ -343,7 +346,7 @@ private struct StepReport {
         self.toolName = toolName
         self.status = if response.isError {
             .error
-        } else if response.meta?.objectValue?["state"] == .string("dispatched_unverified") {
+        } else if MCPActionObservation.isUnverified(response) {
             .unverified
         } else {
             .ok
