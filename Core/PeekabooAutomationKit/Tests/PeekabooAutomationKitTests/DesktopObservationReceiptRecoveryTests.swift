@@ -63,6 +63,78 @@ final class DesktopObservationReceiptRecoveryTests: XCTestCase {
         XCTAssertEqual(resolver.resolveCalls, 2)
     }
 
+    func testPassiveObservationRetriesOneIncompleteAccessibilityReadAfterAPause() async throws {
+        let bounds = CGRect(x: 100, y: 100, width: 500, height: 400)
+        let resolver = RecordingReceiptTargetResolver(target: Self.receiptedTarget(bounds: bounds))
+        let automation = ReceiptRecoveryAutomationService(incompleteReadsBeforeSuccess: 1)
+        let service = DesktopObservationService(
+            screenCapture: ReceiptRecoveryCaptureService(result: Self.receiptedCapture(bounds: bounds)),
+            automation: automation,
+            targetResolver: resolver)
+        var pauses: [(duration: Duration, detectionsBefore: Int)] = []
+        service.incompleteAccessibilityRetryPause = { duration in
+            pauses.append((duration, automation.detectCalls))
+        }
+
+        let result = try await service.observe(DesktopObservationRequest(
+            target: .app(identifier: "Fixture", window: .automatic),
+            detection: DesktopDetectionOptions(mode: .accessibility)))
+
+        XCTAssertEqual(pauses.map(\.duration), [.milliseconds(300)])
+        XCTAssertEqual(pauses.map(\.detectionsBefore), [1])
+        XCTAssertEqual(automation.detectCalls, 2)
+        XCTAssertEqual(result.elements?.elements.all.count, 1)
+    }
+
+    func testIncompleteAccessibilityReadIsReportedAfterOneRetry() async throws {
+        let bounds = CGRect(x: 100, y: 100, width: 500, height: 400)
+        let automation = ReceiptRecoveryAutomationService(incompleteReadsBeforeSuccess: 2)
+        let service = DesktopObservationService(
+            screenCapture: ReceiptRecoveryCaptureService(result: Self.receiptedCapture(bounds: bounds)),
+            automation: automation,
+            targetResolver: RecordingReceiptTargetResolver(target: Self.receiptedTarget(bounds: bounds)))
+        service.incompleteAccessibilityRetryPause = { _ in }
+
+        do {
+            _ = try await service.observe(DesktopObservationRequest(
+                target: .app(identifier: "Fixture", window: .automatic),
+                detection: DesktopDetectionOptions(mode: .accessibility)))
+            XCTFail("Expected the second incomplete accessibility read to be reported")
+        } catch PeekabooError.accessibilityIncomplete {
+            // Expected.
+        }
+
+        XCTAssertEqual(automation.detectCalls, 2)
+    }
+
+    func testPotentiallyMutatingObservationModesDoNotRetryIncompleteAccessibilityReads() async throws {
+        let bounds = CGRect(x: 100, y: 100, width: 500, height: 400)
+        let requests = [
+            DesktopObservationRequest(
+                target: .app(identifier: "Fixture", window: .automatic),
+                capture: DesktopCaptureOptions(focus: .foreground),
+                detection: DesktopDetectionOptions(mode: .accessibility)),
+            DesktopObservationRequest(
+                target: .app(identifier: "Fixture", window: .automatic),
+                detection: DesktopDetectionOptions(mode: .accessibility, allowWebFocusFallback: true)),
+        ]
+
+        for request in requests {
+            let automation = ReceiptRecoveryAutomationService(incompleteReadsBeforeSuccess: 1)
+            let service = DesktopObservationService(
+                screenCapture: ReceiptRecoveryCaptureService(result: Self.receiptedCapture(bounds: bounds)),
+                automation: automation,
+                targetResolver: RecordingReceiptTargetResolver(target: Self.receiptedTarget(bounds: bounds)))
+            var pauses = 0
+            service.incompleteAccessibilityRetryPause = { _ in pauses += 1 }
+
+            _ = try? await service.observe(request)
+
+            XCTAssertEqual(automation.detectCalls, 1)
+            XCTAssertEqual(pauses, 0)
+        }
+    }
+
     func testPassiveObservationStopsAfterOneChangedCaptureReceiptRetry() async throws {
         let bounds = CGRect(x: 100, y: 100, width: 500, height: 400)
         let resolver = RecordingReceiptTargetResolver(target: Self.receiptedTarget(bounds: bounds))
@@ -410,10 +482,12 @@ private final class ReceiptRecoveryCaptureService: ScreenCaptureServiceProtocol 
 @MainActor
 private final class ReceiptRecoveryAutomationService: UIAutomationObservationActionResultProviding {
     private let actionError: (any Error)?
+    private var incompleteReadsBeforeSuccess: Int
     private(set) var detectCalls = 0
 
-    init(actionError: (any Error)? = nil) {
+    init(actionError: (any Error)? = nil, incompleteReadsBeforeSuccess: Int = 0) {
         self.actionError = actionError
+        self.incompleteReadsBeforeSuccess = incompleteReadsBeforeSuccess
     }
 
     func detectElements(
@@ -457,6 +531,18 @@ private final class ReceiptRecoveryAutomationService: UIAutomationObservationAct
         self.detectCalls += 1
         if let actionError {
             throw actionError
+        }
+        if self.incompleteReadsBeforeSuccess > 0 {
+            self.incompleteReadsBeforeSuccess -= 1
+            return ElementDetectionResult(
+                snapshotId: snapshotID ?? "generated",
+                screenshotPath: "/tmp/fake.png",
+                elements: DetectedElements(),
+                metadata: DetectionMetadata(
+                    detectionTime: 0,
+                    elementCount: 0,
+                    method: "fake",
+                    truncationInfo: DetectionTruncationInfo(incompleteAccessibilityRead: true)))
         }
         return ElementDetectionResult(
             snapshotId: snapshotID ?? "generated",

@@ -487,6 +487,7 @@ extension DesktopObservationServiceTests {
             automation: automation,
             applications: RecordingApplicationService(applications: [app], windows: [window]),
             snapshotManager: snapshots)
+        service.incompleteAccessibilityRetryPause = { _ in }
 
         do {
             _ = try await service.observe(DesktopObservationRequest(
@@ -504,7 +505,8 @@ extension DesktopObservationServiceTests {
             }
         }
 
-        XCTAssertEqual(automation.detectCalls, 1)
+        // The passive observation reads once more after an incomplete read before reporting it.
+        XCTAssertEqual(automation.detectCalls, 2)
         let reservedSnapshotID = try XCTUnwrap(automation.lastSnapshotID)
         XCTAssertNotNil(SnapshotReference(rawValue: reservedSnapshotID))
         let ownsFailedReservation = try await snapshots.ownsSnapshot(snapshotId: reservedSnapshotID)

@@ -388,6 +388,11 @@ public final class DesktopObservationService: DesktopObservationActionResultProv
         try? await Task.sleep(for: duration)
     }
 
+    /// Waits before the one retry of a passive observation whose accessibility read came back incomplete.
+    var incompleteAccessibilityRetryPause: @MainActor (Duration) async -> Void = { duration in
+        try? await Task.sleep(for: duration)
+    }
+
     public init(
         screenCapture: any ScreenCaptureServiceProtocol,
         automation: any UIAutomationServiceProtocol,
@@ -484,7 +489,9 @@ public final class DesktopObservationService: DesktopObservationActionResultProv
         request.output.snapshotID = request.output.snapshotID ?? reservation?.snapshotID
 
         do {
-            let result = try await self.observePreparedRequest(request)
+            let result = try await self.withIncompleteAccessibilityRetry(for: request) {
+                try await self.observePreparedRequest(request)
+            }
             if let reservation {
                 try await self.outputWriter.publishReservedSnapshot(reservation)
             }
@@ -1026,6 +1033,22 @@ public final class DesktopObservationService: DesktopObservationActionResultProv
                 throw error
             }
             await self.changedTargetRetryPause(.milliseconds(200))
+            try Task.checkCancellation()
+            return try await operation()
+        }
+    }
+
+    /// An accessibility read can come back incomplete while the target app is busy (for example right after
+    /// launch or while the user switches apps). A passive observation is a pure read, so observe once more
+    /// after a short pause before reporting it.
+    private func withIncompleteAccessibilityRetry<T: Sendable>(
+        for request: DesktopObservationRequest,
+        operation: @escaping @MainActor @Sendable () async throws -> T) async throws -> T
+    {
+        do {
+            return try await operation()
+        } catch PeekabooError.accessibilityIncomplete where Self.allowsPassiveCaptureReceiptRecovery(request) {
+            await self.incompleteAccessibilityRetryPause(.milliseconds(300))
             try Task.checkCancellation()
             return try await operation()
         }
