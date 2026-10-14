@@ -304,47 +304,26 @@ struct HotkeyServiceTargetingTests {
         #expect(postedEventCount == 0)
     }
 
-    @Test func `targeted lifecycle hotkeys fail before posting unverifiable events`() async throws {
-        var postedEventCount = 0
+    @Test(arguments: [("command+w", Int64(0x0D)), ("CMD,Q", 0x0C), ("cmd h", 0x04), ("cmd,m", 0x2E)])
+    func `targeted lifecycle hotkeys are posted to the target process only`(keys: String, keyCode: Int64) async throws {
+        var postedEvents: [PostedKeyboardEvent] = []
         let service = HotkeyService(
             postEventAccessEvaluator: { true },
-            eventPoster: { _, _ in postedEventCount += 1 })
-        let cases = [
-            (keys: "command+w", chord: "Cmd+W", alternative: "peekaboo window close"),
-            (keys: "CMD,Q", chord: "Cmd+Q", alternative: "peekaboo app quit"),
-            (keys: "cmd h", chord: "Cmd+H", alternative: "peekaboo app hide"),
-            (keys: "cmd,m", chord: "Cmd+M", alternative: "peekaboo window minimize"),
-        ]
+            eventPoster: { event, pid in
+                postedEvents.append(PostedKeyboardEvent(
+                    type: event.type,
+                    keyCode: event.getIntegerValueField(.keyboardEventKeycode),
+                    flags: event.flags,
+                    targetPID: event.getIntegerValueField(.eventTargetUnixProcessID),
+                    pid: pid))
+            })
 
-        for testCase in cases {
-            do {
-                try await service.hotkey(
-                    keys: testCase.keys,
-                    holdDuration: 0,
-                    targetProcessIdentifier: getpid())
-                Issue.record("Expected background \(testCase.chord) to fail closed")
-            } catch {
-                #expect(error.localizedDescription.contains(testCase.chord))
-                #expect(error.localizedDescription.contains(testCase.alternative))
-                #expect(error.localizedDescription.contains("--foreground"))
-            }
-        }
+        let result = try await service.hotkey(keys: keys, holdDuration: 0, targetProcessIdentifier: getpid())
 
-        #expect(postedEventCount == 0)
-    }
-
-    @Test func `targeted policy does not mistake modified app shortcuts for lifecycle commands`() async throws {
-        var postedEvents: [CGEventType] = []
-        let service = HotkeyService(
-            postEventAccessEvaluator: { true },
-            eventPoster: { event, _ in postedEvents.append(event.type) })
-
-        try await service.hotkey(
-            keys: "cmd,shift,h",
-            holdDuration: 0,
-            targetProcessIdentifier: getpid())
-
-        #expect(postedEvents == [.flagsChanged, .flagsChanged, .keyDown, .keyUp, .flagsChanged, .flagsChanged])
+        #expect(postedEvents.map(\.type) == [.flagsChanged, .keyDown, .keyUp, .flagsChanged])
+        #expect(postedEvents.map(\.keyCode) == [0x37, keyCode, keyCode, 0x37])
+        #expect(postedEvents.allSatisfy { $0.pid == getpid() && $0.targetPID == Int64(getpid()) })
+        #expect(result.outcome.state == .dispatchedUnverified)
     }
 
     @Test func `targeted hotkey posts key down and key up to target process`() async throws {

@@ -210,7 +210,6 @@ public final class HotkeyService {
         self.logger.debug(
             "Targeted hotkey requested: '\(keys)', hold: \(holdDuration)ms, pid: \(targetProcessIdentifier)")
 
-        try BackgroundHotkeyPolicy.validate(keys: keys)
         let parsedKeys = try Self.parsedKeys(keys)
         let plannedChord = try? self.makeHotkeyPlan(parsedKeys)
         if clipboardClaim != nil || prepareBackgroundWindow {

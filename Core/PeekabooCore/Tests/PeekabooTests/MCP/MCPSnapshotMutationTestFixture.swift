@@ -277,6 +277,8 @@ final class MCPSnapshotLeaseWindowService: ScriptedWindowInventoryService,
 {
     private let window: ServiceWindowInfo
     private(set) var pinnedFocusCalls = 0
+    /// Thrown by `listWindows`, for example `appNotFound` once the app has quit.
+    var listWindowsError: (any Error)?
     var focusOutcome: DesktopActionOutcome? = .confirmedChange(
         delivery: .init(mechanism: .nativeFramework, mode: .foreground),
         unitCount: .one)
@@ -284,6 +286,13 @@ final class MCPSnapshotLeaseWindowService: ScriptedWindowInventoryService,
     init(graph: LinkedApplicationInventoryGraph, window: ServiceWindowInfo) {
         self.window = window
         super.init(windowsByIdentifier: graph.windowsByIdentifier)
+    }
+
+    override func listWindows(target: WindowTarget) async throws -> [ServiceWindowInfo] {
+        if let listWindowsError {
+            throw listWindowsError
+        }
+        return try await super.listWindows(target: target)
     }
 
     @MainActor

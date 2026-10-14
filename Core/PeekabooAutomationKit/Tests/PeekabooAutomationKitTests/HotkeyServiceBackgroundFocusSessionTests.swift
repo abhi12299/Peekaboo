@@ -69,12 +69,24 @@ struct HotkeyServiceBackgroundFocusSessionTests {
     }
 
     @Test(arguments: ["cmd,w", "cmd,q", "cmd,h", "cmd,m"])
-    func `lifecycle shortcuts stay refused before any focus record or key`(keys: String) async throws {
+    func `lifecycle shortcuts are delivered to the target window inside the focus session`(keys: String) async throws {
         let log = FocusSessionLog()
-        await #expect(throws: PeekabooError.self) {
-            try await log.service().hotkey(keys: keys, holdDuration: 50, automationTarget: Self.target())
+        let result = try await log.service().hotkey(keys: keys, holdDuration: 50, automationTarget: Self.target())
+        #expect(log.steps == [
+            .record(.focus),
+            .priming(.leftMouseDown),
+            .priming(.leftMouseUp),
+            .key(.flagsChanged),
+            .key(.keyDown),
+            .key(.keyUp),
+            .key(.flagsChanged),
+            .record(.undo),
+        ])
+        for event in log.keyEvents {
+            #expect(event.getIntegerValueField(.eventTargetUnixProcessID) == Int64(getpid()))
+            #expect(event.getIntegerValueField(CGEventField(rawValue: 51)!) == 100)
         }
-        #expect(log.steps.isEmpty)
+        #expect(result.outcome?.state == .dispatchedUnverified)
     }
 
     @Test

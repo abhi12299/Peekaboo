@@ -429,8 +429,6 @@ enum AutomationServiceBridge {
         targetProcessIdentifier: pid_t
     ) async throws -> UIAutomationActionResult<Void> {
         try await Task { @MainActor in
-            try BackgroundHotkeyPolicy.validate(keys: keys)
-
             guard let targetedHotkeyService = automation as? any TargetedHotkeyServiceProtocol else {
                 throw PeekabooError.serviceUnavailable(
                     "Background hotkeys require an automation service that supports targeted hotkey delivery"
@@ -464,8 +462,6 @@ enum AutomationServiceBridge {
         expectedProcessIdentity: ApplicationProcessIdentity
     ) async throws -> UIAutomationActionResult<Void> {
         try await Task { @MainActor in
-            try BackgroundHotkeyPolicy.validate(keys: keys)
-
             guard let targetedHotkeyService = automation as? any TargetedHotkeyServiceProtocol,
                   targetedHotkeyService.supportsProcessGenerationPinnedHotkeys
             else {

@@ -1,6 +1,7 @@
 import Foundation
 import MCP
 import PeekabooAutomation
+import PeekabooFoundation
 import TachikomaMCP
 
 /// A single input tool whose result can be `dispatched_unverified`. When such a call names its window (through a
@@ -116,14 +117,20 @@ private struct ObservedWindow {
         self.processIdentifier = nil
     }
 
-    /// One line when the window is gone (for example its close button was clicked), naming a dialog the app now
-    /// shows; nil when the window is still listed or its app's windows cannot be read.
+    /// One line when the window is gone (for example its close button was clicked or its app quit), naming a
+    /// dialog the app now shows; nil when the window is still listed or its app's windows cannot be read.
     @MainActor
     func goneLine(windows: any WindowManagementServiceProtocol) async -> String? {
-        guard let processIdentifier,
-              let appWindows = try? await windows.listWindows(target: .application("PID:\(processIdentifier)")),
-              !appWindows.contains(where: { $0.windowID == self.id })
-        else { return nil }
+        guard let processIdentifier else { return nil }
+        let appWindows: [ServiceWindowInfo]
+        do {
+            appWindows = try await windows.listWindows(target: .application("PID:\(processIdentifier)"))
+        } catch PeekabooError.appNotFound {
+            return "Window \(self.id) is no longer open; its app is no longer running."
+        } catch {
+            return nil
+        }
+        guard !appWindows.contains(where: { $0.windowID == self.id }) else { return nil }
         var line = "Window \(self.id) is no longer open."
         if let dialog = appWindows.first(where: { Self.dialogSubroles.contains($0.subrole ?? "") }) {
             let title = dialog.title.isEmpty ? "" : " \"\(dialog.title)\""

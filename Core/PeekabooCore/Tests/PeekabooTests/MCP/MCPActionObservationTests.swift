@@ -102,6 +102,49 @@ struct MCPActionObservationTests {
     }
 
     @Test
+    func `a background Cmd+W press reports the closed window and the save sheet it left`() async throws {
+        let fixture = try await MCPSnapshotMutationTestFixture.make()
+        fixture.automation.uiAutomationOutcomeScript.setDefaultOutcome(Self.unverified)
+        let see = ObservationProbe(response: ToolResponse.error("Window 42 was not found")) {
+            fixture.windows.replaceWindowsForTesting(["PID:333": [ServiceWindowInfo(
+                windowID: 77,
+                title: "Save changes?",
+                bounds: CGRect(x: 0, y: 0, width: 300, height: 200),
+                subrole: "AXSheet")]])
+        }
+
+        let response = try await fixture.context.execute(
+            tool: PressTool(context: fixture.context).observing(with: see),
+            arguments: ToolArguments(raw: ["snapshot": fixture.snapshotID, "key": "w", "modifiers": ["cmd"]]))
+
+        #expect(!response.isError, "\(Self.text(response))")
+        #expect(fixture.automation.exactHotkeyCalls == 1)
+        #expect(see.log.arguments.map { $0.getInt("window_id") } == [42])
+        #expect(Self.text(response).hasSuffix(
+            "Window 42 is no longer open. The app now shows a dialog \"Save changes?\"; " +
+                "use the dialog tool to answer it."))
+    }
+
+    @Test
+    func `a background Cmd+Q press whose app quit reports the window gone and still succeeds`() async throws {
+        let fixture = try await MCPSnapshotMutationTestFixture.make()
+        fixture.automation.uiAutomationOutcomeScript.setDefaultOutcome(Self.unverified)
+        let see = ObservationProbe(response: ToolResponse.error("Application PID:333 was not found")) {
+            fixture.windows.listWindowsError = PeekabooError.appNotFound("PID:333")
+        }
+
+        let response = try await fixture.context.execute(
+            tool: PressTool(context: fixture.context).observing(with: see),
+            arguments: ToolArguments(raw: ["snapshot": fixture.snapshotID, "key": "q", "modifiers": ["cmd"]]))
+
+        #expect(!response.isError, "\(Self.text(response))")
+        #expect(fixture.automation.exactHotkeyCalls == 1)
+        let text = Self.text(response)
+        #expect(text.hasSuffix("Window 42 is no longer open; its app is no longer running."))
+        #expect(!text.contains("was not found"))
+    }
+
+    @Test
     func `a failed observation of a window that is still open is appended without failing the action`() async throws {
         let fixture = try await MCPSnapshotMutationTestFixture.make()
         fixture.automation.uiAutomationOutcomeScript.setDefaultOutcome(Self.unverified)

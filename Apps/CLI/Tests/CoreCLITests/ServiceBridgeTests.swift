@@ -64,6 +64,28 @@ struct ServiceBridgeTests {
         #expect(automation.targetedHotkeyCalls.first?.targetProcessIdentifier == 12345)
     }
 
+    @Test(arguments: ["cmd,w", "cmd,q", "cmd,h", "cmd,m"])
+    func `background lifecycle shortcuts are forwarded to the target process`(keys: String) async throws {
+        let automation = MockTargetedAutomationService()
+        automation.supportsProcessGenerationPinnedHotkeys = true
+
+        _ = try await AutomationServiceBridge.hotkey(
+            automation: automation,
+            keys: keys,
+            holdDuration: 50,
+            targetProcessIdentifier: 12345
+        )
+        _ = try await AutomationServiceBridge.hotkey(
+            automation: automation,
+            keys: keys,
+            holdDuration: 50,
+            expectedProcessIdentity: self.processIdentity
+        )
+
+        #expect(automation.targetedHotkeyCalls.map(\.keys) == [keys, keys])
+        #expect(automation.targetedHotkeyCalls.map(\.targetProcessIdentifier) == [12345, 12345])
+    }
+
     @Test func `automation targeted hotkey maps missing event synthesizing permission`() async throws {
         let automation = MockTargetedAutomationService()
         automation.supportsTargetedHotkeys = false
@@ -430,6 +452,7 @@ TargetedTypeServiceProtocol, ExactWindowTargetedClickServiceProtocol, CompositeT
     var targetedClickCalls: [TargetedClickCall] = []
     private(set) var policyAwareClickEntryCount = 0
     var supportsTargetedHotkeys = true
+    var supportsProcessGenerationPinnedHotkeys = false
     var targetedHotkeyUnavailableReason: String?
     var targetedHotkeyRequiresEventSynthesizingPermission = false
     var supportsTargetedTypeActions = true
@@ -449,6 +472,14 @@ TargetedTypeServiceProtocol, ExactWindowTargetedClickServiceProtocol, CompositeT
             keys: keys,
             holdDuration: holdDuration,
             targetProcessIdentifier: targetProcessIdentifier
+        ))
+    }
+
+    func hotkey(keys: String, holdDuration: Int, expectedProcessIdentity: ApplicationProcessIdentity) async throws {
+        self.targetedHotkeyCalls.append(.init(
+            keys: keys,
+            holdDuration: holdDuration,
+            targetProcessIdentifier: expectedProcessIdentity.processIdentifier
         ))
     }
 
