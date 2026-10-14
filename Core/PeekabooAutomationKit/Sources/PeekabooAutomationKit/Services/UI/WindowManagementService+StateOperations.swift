@@ -199,6 +199,7 @@ extension WindowManagementService {
                             dispatchCount: 1,
                             cause: error)
                     }
+                    await self.settleRestoredWindow(expectedIdentity)
                     return WindowManagementActionOutcome.confirmedChange(
                         delivery: WindowManagementActionOutcome.backgroundValueDelivery,
                         dispatchCount: 1)
@@ -236,12 +237,24 @@ extension WindowManagementService {
                         dispatchCount: 1,
                         cause: error)
                 }
+                await self.settleRestoredWindow(expectedIdentity)
                 return WindowManagementActionOutcome.confirmedChange(
                     delivery: WindowManagementActionOutcome.backgroundValueDelivery,
                     dispatchCount: 1)
             }
         }
         return DesktopActionResult(outcome: outcome)
+    }
+
+    /// Holds the restore result until the un-minimize animation has finished changing the window, so the
+    /// receipt a caller reads next (post-action readback, `see`, `close`) is the settled one.
+    private func settleRestoredWindow(_ expectedIdentity: WindowMutationIdentity) async {
+        guard let capturedBounds = expectedIdentity.capturedBounds else { return }
+        _ = try? await waitForRestoredWindowToSettle(
+            expectedBounds: capturedBounds,
+            read: { await BoundedBackgroundWindowAX.restoredSettleSample(expectedIdentity: expectedIdentity) },
+            sleep: { try await Task.sleep(for: $0) },
+            now: { ContinuousClock.now })
     }
 
     func restorePinnedMinimizedWindow(
@@ -978,6 +991,48 @@ func completePinnedMinimizedWindowRestore(
     return restoredIdentity
 }
 
+/// One read of a just-restored window: AX minimized state plus the WindowServer row's frame and visibility.
+struct RestoredWindowSettleSample: Equatable, Sendable {
+    let isMinimized: Bool?
+    let bounds: CGRect?
+    let isOnScreen: Bool?
+    let alpha: CGFloat?
+}
+
+/// The un-minimize animation outlives the first matching readback: the window's WindowServer row keeps
+/// changing for a moment, so an immediate `see` or `close` saw a different receipt. Waits until the window
+/// reads unminimized at its receipt bounds with an identical state `requiredStableReads` times in a row.
+/// Returns false when it never settles before `timeout`; the restore itself was already verified.
+@MainActor
+func waitForRestoredWindowToSettle(
+    expectedBounds: CGRect,
+    read: @MainActor () async -> RestoredWindowSettleSample?,
+    sleep: @MainActor (Duration) async throws -> Void,
+    now: () -> ContinuousClock.Instant,
+    timeout: Duration = .seconds(2),
+    interval: Duration = .milliseconds(100),
+    requiredStableReads: Int = 3) async throws -> Bool
+{
+    let deadline = now().advanced(by: timeout)
+    var previous: RestoredWindowSettleSample?
+    var stableReads = 0
+    while true {
+        try Task.checkCancellation()
+        let sample = await read()
+        if let sample, sample.isMinimized == false, sample.bounds == expectedBounds {
+            stableReads = sample == previous ? stableReads + 1 : 1
+        } else {
+            stableReads = 0
+        }
+        previous = sample
+        if stableReads >= requiredStableReads {
+            return true
+        }
+        guard now() < deadline else { return false }
+        try await sleep(interval)
+    }
+}
+
 func exactWindowIDForStateMutation(
     target: WindowTarget,
     resolvedWindows: [ServiceWindowInfo]) throws -> Int
@@ -1074,6 +1129,27 @@ private enum BoundedBackgroundWindowAX {
                 processStartIdentityBeforeScan: processStartIdentityBeforeScan,
                 processStartIdentityAfterScan: processStartIdentityAfterScan,
                 scan: scan)
+        }
+    }
+
+    static func restoredSettleSample(expectedIdentity: WindowMutationIdentity) async -> RestoredWindowSettleSample? {
+        await self.perform(expectedIdentity: expectedIdentity) {
+            guard SystemIdentityResolver.validateWindowMutationOwnerGeneration(expectedIdentity),
+                  let windowID = CGWindowID(exactly: expectedIdentity.windowID),
+                  let row = SystemIdentityResolver.windowIdentity(windowID),
+                  row.ownerProcessIdentifier == expectedIdentity.ownerProcessIdentifier,
+                  let window = self.exactWindow(windowID: windowID, ownerPID: expectedIdentity.ownerProcessIdentifier)
+            else {
+                return nil
+            }
+            let isMinimized = AXChildWindowMessagingTimeout.perform(on: window, timeout: self.messagingTimeout) {
+                self.boolAttribute(kAXMinimizedAttribute as String, of: $0)
+            }
+            return RestoredWindowSettleSample(
+                isMinimized: isMinimized,
+                bounds: row.bounds,
+                isOnScreen: row.isOnScreen,
+                alpha: row.alpha)
         }
     }
 
