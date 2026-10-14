@@ -441,6 +441,86 @@ struct WindowToolExactRoutingTests {
 
     @Test
     @MainActor
+    func `close says when no dialog or sheet is open afterwards`() async throws {
+        let dialogs = CloseFollowUpDialogService(result: .failure(DialogError.noActiveDialog))
+        let context = await MCPToolTestHelpers.makeContext(
+            applications: Self.fixtureApplications(),
+            windows: ExactRoutingWindowService(),
+            dialogs: dialogs,
+            executionPolicy: .backgroundOnly)
+
+        let response = try await context.execute(
+            tool: WindowTool(context: context),
+            arguments: ToolArguments(raw: ["action": "close", "app": "Fixture", "window_id": 924]))
+
+        #expect(!response.isError)
+        #expect(Self.text(response).hasSuffix("\nNo dialog or sheet is open."))
+        #expect(dialogs.selectors.map(\.processIdentifier) == [42])
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["dialog_present"] == .bool(false))
+    }
+
+    @Test
+    @MainActor
+    func `close names a sheet the app shows afterwards`() async throws {
+        let bounds = CGRect(x: 100, y: 100, width: 800, height: 600)
+        let parent = ServiceWindowInfo(
+            windowID: 925,
+            title: "result.txt",
+            bounds: bounds,
+            mutationIdentity: .init(
+                windowID: 925,
+                ownerProcessIdentifier: 42,
+                ownerProcessStartIdentity: 7,
+                capturedBounds: bounds))
+        let applications = Self.fixtureApplications()
+        let dialogs = try CloseFollowUpDialogService(result: .success(DialogElements(
+            dialogInfo: DialogInfo(title: "", role: "AXSheet", bounds: .zero),
+            staticTexts: ["Do you want to save the changes made to the document “result.txt”?"],
+            resolvedTarget: ResolvedDialogTargetEvidence(
+                target: UIAutomationTarget.ExactWindow(window: parent),
+                application: #require(applications.applications.first),
+                window: parent))))
+        let context = await MCPToolTestHelpers.makeContext(
+            applications: applications,
+            windows: ExactRoutingWindowService(),
+            dialogs: dialogs,
+            executionPolicy: .backgroundOnly)
+
+        let response = try await context.execute(
+            tool: WindowTool(context: context),
+            arguments: ToolArguments(raw: ["action": "close", "app": "Fixture", "window_id": 924]))
+
+        #expect(!response.isError)
+        #expect(Self.text(response).hasSuffix(
+            "\nFixture now shows a sheet 'Do you want to save the changes made to the document “result.txt”?'; " +
+                "answer it with `dialog`."))
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["dialog_present"] == .bool(true))
+    }
+
+    @Test
+    @MainActor
+    func `close says when it could not check for a dialog`() async throws {
+        let dialogs = CloseFollowUpDialogService(result: .failure(PeekabooError.serviceUnavailable("offline")))
+        let context = await MCPToolTestHelpers.makeContext(
+            applications: Self.fixtureApplications(),
+            windows: ExactRoutingWindowService(),
+            dialogs: dialogs,
+            executionPolicy: .backgroundOnly)
+
+        let response = try await context.execute(
+            tool: WindowTool(context: context),
+            arguments: ToolArguments(raw: ["action": "close", "app": "Fixture", "window_id": 924]))
+
+        #expect(!response.isError)
+        #expect(Self.text(response).hasSuffix("\nCould not check for a dialog or sheet; use `dialog list` if unsure."))
+        let meta = try #require(response.meta?.objectValue)
+        #expect(meta["dialog_present"] == .null)
+    }
+
+    @Test
+    @MainActor
     func `maximize mutates and reads back the same exact window`() async throws {
         let service = ExactRoutingWindowService()
         let context = await MCPToolTestHelpers.makeContext(
@@ -804,6 +884,12 @@ struct WindowToolExactRoutingTests {
         #expect(service.listTargets.count == 2)
     }
 
+    private static func text(_ response: ToolResponse) -> String {
+        response.content.compactMap { content in
+            if case let .text(text: text, annotations: _, _meta: _) = content { text } else { nil }
+        }.joined(separator: "\n")
+    }
+
     @MainActor
     private static func fixtureApplications() -> MockApplicationService {
         MockApplicationService(applications: [
@@ -1108,3 +1194,56 @@ private final class ExactRoutingWindowService: WindowManagementActionResultProvi
 }
 
 private struct UnexpectedWindowCall: Error {}
+
+/// Answers the targeted dialog read a close follows up with; every other dialog call is unexpected.
+private final class CloseFollowUpDialogService: DialogServiceProtocol, @unchecked Sendable {
+    private let result: Result<DialogElements, any Error>
+    private(set) var selectors: [DialogTargetSelector] = []
+
+    init(result: Result<DialogElements, any Error>) {
+        self.result = result
+    }
+
+    func listDialogElements(target: DialogTargetSelector) async throws -> DialogElements {
+        self.selectors.append(target)
+        return try self.result.get()
+    }
+
+    func findActiveDialog(windowTitle _: String?, appName _: String?) async throws -> DialogInfo {
+        throw PeekabooError.notImplemented("unexpected dialog call")
+    }
+
+    func clickButton(buttonText _: String, windowTitle _: String?, appName _: String?) async throws
+        -> DialogActionResult
+    {
+        throw PeekabooError.notImplemented("unexpected dialog call")
+    }
+
+    func enterText(
+        text _: String,
+        fieldIdentifier _: String?,
+        clearExisting _: Bool,
+        windowTitle _: String?,
+        appName _: String?) async throws -> DialogActionResult
+    {
+        throw PeekabooError.notImplemented("unexpected dialog call")
+    }
+
+    func handleFileDialog(
+        path _: String?,
+        filename _: String?,
+        actionButton _: String?,
+        ensureExpanded _: Bool,
+        appName _: String?) async throws -> DialogActionResult
+    {
+        throw PeekabooError.notImplemented("unexpected dialog call")
+    }
+
+    func dismissDialog(force _: Bool, windowTitle _: String?, appName _: String?) async throws -> DialogActionResult {
+        throw PeekabooError.notImplemented("unexpected dialog call")
+    }
+
+    func listDialogElements(windowTitle _: String?, appName _: String?) async throws -> DialogElements {
+        throw PeekabooError.notImplemented("unexpected dialog call")
+    }
+}

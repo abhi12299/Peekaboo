@@ -25,7 +25,7 @@ public struct WindowTool: MCPTool {
 
         Actions:
         - list: List windows with IDs, bounds, off-screen state, and combined-observation eligibility
-        - close: Close a window
+        - close: Close a window; the result says whether the app now shows a dialog or sheet
         - minimize: Minimize a window
         - restore: Restore a minimized window without activating or focusing its application
         - maximize: Maximize a window

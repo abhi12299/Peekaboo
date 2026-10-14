@@ -35,13 +35,20 @@ extension WindowTool {
             operation: "Window close")
 
         let executionTime = Date().timeIntervalSince(startTime)
+        let followUp = await self.dialogFollowUpAfterClose(
+            ownerProcessIdentifier: mutationIdentity.ownerProcessIdentifier,
+            appName: appName)
         let message = self.successMessage(action: "Closed window '\(windowInfo.title)'", duration: executionTime)
+            + "\n\(followUp.line)"
         return try self.windowResponse(
             message: message,
             appName: appName,
             windowInfo: windowInfo,
             actionDescription: "Window Close",
-            baseMeta: ["execution_time": .double(executionTime)],
+            baseMeta: [
+                "execution_time": .double(executionTime),
+                "dialog_present": followUp.dialogPresent,
+            ],
             actionResult: validatedResult)
     }
 
