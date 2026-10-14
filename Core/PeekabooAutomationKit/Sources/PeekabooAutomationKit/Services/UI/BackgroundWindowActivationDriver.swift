@@ -46,19 +46,19 @@ enum BackgroundWindowActivationDriver {
         let resolved = psn.withUnsafeMutableBytes { resolvePSN(pid, $0.baseAddress!) }
         var reversePID: pid_t = 0
         let reversed = psn.withUnsafeBytes { resolvePID($0.baseAddress!, &reversePID) }
-        guard resolved == 0, reversed == 0, reversePID == pid,
-              let window = SystemIdentityResolver.windowIdentity(windowID),
-              window.ownerProcessIdentifier == pid,
-              SystemIdentityResolver.processStartIdentity(pid) == target.identity.ownerProcessStartIdentity,
-              kind == .undo || (
-                  SystemIdentityResolver.validateWindowMutationIdentity(target.identity) &&
-                      window.bounds == target.bounds &&
-                      window.layer == Int(CGWindowLevelForKey(.normalWindow)) &&
-                      window.isOnScreen && window.alpha > 0)
-        else {
+        let mismatch = if resolved == 0, reversed == 0, reversePID == pid {
+            self.liveTargetMismatch(
+                target,
+                kind: kind,
+                live: SystemIdentityResolver.windowIdentity(windowID),
+                liveProcessStartIdentity: SystemIdentityResolver.processStartIdentity(pid))
+        } else {
+            "process \(pid) has no process serial number"
+        }
+        if let mismatch {
             throw DesktopActionFailure.preDispatchRefusal(
                 reason: .targetUnavailable,
-                message: "The background window activation target changed before delivery.")
+                message: "The background window activation target changed before delivery (\(mismatch)).")
         }
         try Task.checkCancellation()
         let record = self.eventRecord(windowID: windowID, kind: kind)
@@ -72,6 +72,57 @@ enum BackgroundWindowActivationDriver {
                 message: "Background window activation returned an uncertain delivery result; observe before retrying.")
         }
         return .dispatchedUnverified(delivery: delivery, evidence: .deliveryAccepted, unitCount: .one)
+    }
+
+    /// What differs between the captured target and its live WindowServer row, or nil when the record may be
+    /// sent. Focus requires the captured, visible window; undo only the same window and owner generation.
+    static func liveTargetMismatch(
+        _ target: UIAutomationTarget.ExactWindow,
+        kind: RecordKind,
+        live: SystemWindowIdentity?,
+        liveProcessStartIdentity: UInt64?) -> String?
+    {
+        let windowID = target.identity.windowID
+        guard let live else { return "window \(windowID) is no longer listed" }
+        let identity = target.identity
+        let focus = kind == .focus
+        let normalLayer = Int(CGWindowLevelForKey(.normalWindow))
+        // The decision uses the values themselves; the strings below only describe it.
+        var differences: [String] = []
+        func describe(_ name: String, _ captured: String, _ now: String) {
+            differences.append("\(name): captured \(captured), now \(now)")
+        }
+        if live.ownerProcessIdentifier != identity.ownerProcessIdentifier {
+            describe("owner pid", String(identity.ownerProcessIdentifier), String(live.ownerProcessIdentifier))
+        }
+        if liveProcessStartIdentity != identity.ownerProcessStartIdentity {
+            describe(
+                "generation",
+                String(identity.ownerProcessStartIdentity),
+                liveProcessStartIdentity.map(String.init) ?? "none")
+        }
+        if focus, live.bounds != target.bounds {
+            describe(
+                "bounds",
+                WindowIdentityDiagnostics.bounds(target.bounds),
+                WindowIdentityDiagnostics.bounds(live.bounds))
+        }
+        if focus, identity.capturedBounds != live.bounds, identity.capturedBounds != target.bounds {
+            describe(
+                "receipt bounds",
+                WindowIdentityDiagnostics.bounds(identity.capturedBounds),
+                WindowIdentityDiagnostics.bounds(live.bounds))
+        }
+        if focus, live.layer != normalLayer {
+            differences.append("layer: now \(live.layer), normal \(normalLayer)")
+        }
+        if focus, !live.isOnScreen {
+            differences.append("on screen: no")
+        }
+        if focus, !(live.alpha > 0) {
+            differences.append("alpha: now \(live.alpha)")
+        }
+        return differences.isEmpty ? nil : "window \(windowID) \(differences.joined(separator: "; "))"
     }
 
     static func eventRecord(windowID: CGWindowID, kind: RecordKind = .focus) -> [UInt8] {

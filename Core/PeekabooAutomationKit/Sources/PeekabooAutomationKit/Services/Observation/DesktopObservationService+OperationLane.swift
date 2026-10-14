@@ -90,7 +90,8 @@ extension DesktopObservationService {
                   Self.sameWindowIdentity(resolvedWindowIdentity, expectedWindowIdentity)
             else {
                 throw DesktopObservationError.targetChanged(
-                    "the resolved exact window no longer matched its process-generation lane")
+                    "the resolved exact window no longer matched its process-generation lane" +
+                        Self.windowLaneMismatchDetail(expected: expectedWindowIdentity, target: target))
             }
             return
         }
@@ -143,6 +144,32 @@ extension DesktopObservationService {
             access: .read,
             expectedProcessIdentity: processIdentity,
             expectedWindowIdentity: identity)
+    }
+
+    /// ` (window N bounds: lane …, now …)`, naming only the values that differ from the lane receipt.
+    private static func windowLaneMismatchDetail(
+        expected: WindowMutationIdentity,
+        target: ResolvedObservationTarget) -> String
+    {
+        let context = target.detectionContext
+        let receipt = context?.windowMutationIdentity
+        func text(_ value: (some CustomStringConvertible)?) -> String {
+            value.map(\.description) ?? "none"
+        }
+        let differences = WindowIdentityDiagnostics.differences([
+            ("pid", text(expected.ownerProcessIdentifier), text(target.app?.processIdentifier)),
+            ("generation", text(expected.ownerProcessStartIdentity), text(target.app?.processStartIdentity)),
+            ("window", text(expected.windowID), text(context?.windowID)),
+            ("context pid", text(expected.ownerProcessIdentifier), text(context?.applicationProcessId)),
+            ("receipt window", text(expected.windowID), text(receipt?.windowID)),
+            ("receipt pid", text(expected.ownerProcessIdentifier), text(receipt?.ownerProcessIdentifier)),
+            ("receipt generation", text(expected.ownerProcessStartIdentity), text(receipt?.ownerProcessStartIdentity)),
+            (
+                "bounds",
+                WindowIdentityDiagnostics.bounds(expected.capturedBounds),
+                WindowIdentityDiagnostics.bounds(receipt?.capturedBounds)),
+        ], expectedLabel: "lane")
+        return differences.isEmpty ? "" : " (window \(expected.windowID) \(differences))"
     }
 
     private static func sameWindowIdentity(

@@ -66,6 +66,8 @@ struct BackgroundFocusSession {
             if (error as? DesktopActionFailure)?.outcome.state == .indeterminate {
                 try? self.postRecord(target, .undo)
             }
+            let cause = error.localizedDescription
+            Self.logger.debug("Focus preparation failed: \(cause, privacy: .public)")
             throw Self.preparationRefusal(error)
         }
         await self.sleep(.milliseconds(50))
@@ -99,6 +101,8 @@ struct BackgroundFocusSession {
         } catch let failure as DesktopActionFailure
             where failure.outcome.state == .refused && failure.outcome.refusalReason == .targetUnavailable
         {
+            let cause = failure.localizedDescription
+            Self.logger.debug("Focus record refused, retrying once: \(cause, privacy: .public)")
             await self.sleep(.milliseconds(200))
             try Task.checkCancellation()
             try self.postRecord(target, .focus)

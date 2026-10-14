@@ -46,7 +46,28 @@ struct MCPSnapshotWindowBoundsRecheckTests {
         #expect(fixture.automation.mutationCalls == 0)
         #expect(fixture.windows.windowMutationInventoryRequests.count == 2)
         #expect(Self.text(response).contains(
-            "window 42 moved or resized after snapshot '\(fixture.snapshotID)' was taken; run `see` again"))
+            "window 42 moved or resized after snapshot '\(fixture.snapshotID)' was taken ("))
+        #expect(Self.text(response).contains("); run `see` again and use the new snapshot"))
+    }
+
+    @Test
+    func `the moved-window refusal names the captured and live frames`() async throws {
+        let fixture = try await MCPSnapshotMutationTestFixture.make()
+        let captured = try Self.capturedWindow(fixture)
+        let moved = AutomationTestFixtures.window(
+            copying: captured,
+            bounds: captured.bounds.insetBy(dx: 0, dy: -11),
+            isOnScreen: false)
+        fixture.windows.defaultInventorySequence = [.complete([moved])]
+
+        let response = try await Self.click(fixture)
+
+        let capturedText = WindowIdentityDiagnostics.bounds(captured.bounds)
+        let liveText = WindowIdentityDiagnostics.bounds(moved.bounds)
+        #expect(response.isError)
+        #expect(Self.text(response).contains(
+            "window 42 moved or resized after snapshot '\(fixture.snapshotID)' was taken " +
+                "(captured \(capturedText), now \(liveText), not on screen); run `see` again"))
     }
 
     @Test

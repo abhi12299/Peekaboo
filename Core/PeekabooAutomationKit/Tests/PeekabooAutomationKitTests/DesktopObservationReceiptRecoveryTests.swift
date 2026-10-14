@@ -135,6 +135,30 @@ final class DesktopObservationReceiptRecoveryTests: XCTestCase {
         }
     }
 
+    func testWindowLaneRefusalSaysWhichValuesDiffered() async throws {
+        let laneBounds = CGRect(x: 152, y: 73, width: 656, height: 422)
+        let resolvedBounds = CGRect(x: 152, y: 73, width: 656, height: 444.5)
+        let service = DesktopObservationService(
+            screenCapture: ReceiptRecoveryCaptureService(result: Self.receiptedCapture(bounds: resolvedBounds)),
+            automation: ReceiptRecoveryAutomationService(),
+            targetResolver: RecordingReceiptTargetResolver(target: Self.receiptedTarget(bounds: resolvedBounds)),
+            processStartIdentityProvider: { _ in 700 },
+            windowMutationIdentityProvider: { _ in Self.receipt(bounds: laneBounds) })
+        service.changedTargetRetryPause = { _ in }
+
+        do {
+            _ = try await service.observe(DesktopObservationRequest(
+                target: .windowID(42),
+                detection: DesktopDetectionOptions(mode: .none)))
+            XCTFail("Expected the lane refusal")
+        } catch let DesktopObservationError.targetChanged(detail) {
+            XCTAssertEqual(
+                detail,
+                "the resolved exact window no longer matched its process-generation lane " +
+                    "(window 42 bounds: lane 152,73 656×422, now 152,73 656×444.5)")
+        }
+    }
+
     func testPassiveObservationStopsAfterOneChangedCaptureReceiptRetry() async throws {
         let bounds = CGRect(x: 100, y: 100, width: 500, height: 400)
         let resolver = RecordingReceiptTargetResolver(target: Self.receiptedTarget(bounds: bounds))
@@ -387,7 +411,7 @@ final class DesktopObservationReceiptRecoveryTests: XCTestCase {
                     mutationIdentity: self.receipt(bounds: bounds))))
     }
 
-    private static func receipt(bounds: CGRect) -> WindowMutationIdentity {
+    nonisolated private static func receipt(bounds: CGRect) -> WindowMutationIdentity {
         WindowMutationIdentity(
             windowID: 42,
             ownerProcessIdentifier: 123,

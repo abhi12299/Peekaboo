@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import PeekabooAutomationKit
 import PeekabooFoundation
@@ -98,25 +99,54 @@ extension MCPToolContext {
             // live frame differs, e.g. while a just-launched app settles its window. Read it once more before
             // refusing; a frame that still differs is refused as before.
             try await Task.sleep(for: Self.windowFrameSettleDelay)
-            do {
-                authority = try await self.receiptBoundMutationAuthority(for: identity)
-            } catch DesktopTargetIdentityError.contradictoryWindowBounds {
-                throw SnapshotWindowFrameChanged(
-                    windowID: identity.exactWindow?.identity.windowID,
-                    snapshotID: snapshotID)
-            }
+            authority = try await self.rebindingSettledWindowFrame(identity, snapshotID: snapshotID)
         }
         return AuthorizedDesktopTargetPlan(mutationAuthority: authority)
+    }
+
+    /// Same as `receiptBoundMutationAuthority(for:)`, but keeps the live window it read so a frame that still
+    /// differs is refused with both frames.
+    @MainActor
+    private func rebindingSettledWindowFrame(
+        _ identity: DesktopTargetIdentity,
+        snapshotID: String) async throws -> DesktopTargetPlanning.ReceiptBoundMutationAuthorityPlan
+    {
+        let planner = DesktopTargetPlanning.MutationAuthorityPlanner(
+            applications: self.applications,
+            windows: self.windows)
+        let live = try await planner.plan(
+            selector: InteractionTargetSelector(
+                processIdentifier: Int(identity.processIdentity.processIdentifier),
+                windowID: identity.exactWindow?.identity.windowID),
+            expectedProcessIdentity: identity.processIdentity)
+        do {
+            return try planner.bind(identity: identity, authority: live)
+        } catch DesktopTargetIdentityError.contradictoryWindowBounds {
+            throw SnapshotWindowFrameChanged(
+                windowID: identity.exactWindow?.identity.windowID,
+                snapshotID: snapshotID,
+                capturedBounds: identity.exactWindow?.bounds,
+                liveBounds: live.window?.identity.capturedBounds,
+                liveIsOnScreen: live.window?.selectionWindow.isOnScreen)
+        }
     }
 
     /// The snapshot's window is still the same window of the same process, but its live frame no longer matches.
     struct SnapshotWindowFrameChanged: Error, CustomStringConvertible {
         let windowID: Int?
         let snapshotID: String
+        var capturedBounds: CGRect?
+        var liveBounds: CGRect?
+        var liveIsOnScreen: Bool?
 
         var description: String {
-            "window \(self.windowID.map(String.init) ?? "?") moved or resized after snapshot '\(self.snapshotID)' " +
-                "was taken; run `see` again and use the new snapshot"
+            var frames = "captured \(WindowIdentityDiagnostics.bounds(self.capturedBounds)), " +
+                "now \(WindowIdentityDiagnostics.bounds(self.liveBounds))"
+            if self.liveIsOnScreen == false {
+                frames += ", not on screen"
+            }
+            return "window \(self.windowID.map(String.init) ?? "?") moved or resized after snapshot " +
+                "'\(self.snapshotID)' was taken (\(frames)); run `see` again and use the new snapshot"
         }
     }
 
