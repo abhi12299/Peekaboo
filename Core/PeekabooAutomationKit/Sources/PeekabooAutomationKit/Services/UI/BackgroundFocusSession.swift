@@ -60,7 +60,7 @@ struct BackgroundFocusSession {
             return try await action()
         }
         do {
-            try self.postRecord(target, .focus)
+            try await self.postFocusRecord(target: target)
         } catch {
             // A record that may have been delivered could have left the window key; revert it.
             if (error as? DesktopActionFailure)?.outcome.state == .indeterminate {
@@ -89,6 +89,20 @@ struct BackgroundFocusSession {
                 "Focus undo record failed for window \(windowID, privacy: .public): \(cause, privacy: .public)")
         }
         return try result.get()
+    }
+
+    /// A window that briefly failed the live check (for example while the user switches apps) is read once more
+    /// after a pause. Only a refusal that sent nothing is retried, so the target never sees a second record.
+    private func postFocusRecord(target: UIAutomationTarget.ExactWindow) async throws {
+        do {
+            try self.postRecord(target, .focus)
+        } catch let failure as DesktopActionFailure
+            where failure.outcome.state == .refused && failure.outcome.refusalReason == .targetUnavailable
+        {
+            await self.sleep(.milliseconds(200))
+            try Task.checkCancellation()
+            try self.postRecord(target, .focus)
+        }
     }
 
     /// The action never ran, so the caller may retry the whole request.

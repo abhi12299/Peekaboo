@@ -110,6 +110,65 @@ struct BackgroundFocusSessionTests {
     }
 
     @Test
+    func `focus record refused because the target changed is retried once after a pause`() async throws {
+        let recorder = Recorder()
+        recorder.transientFocusRecordErrors = [Self.targetChangedRefusal()]
+        let result = try await recorder.session().perform(target: Self.target()) {
+            recorder.steps.append(.action)
+            return 3
+        }
+        #expect(result == 3)
+        #expect(recorder.focusRecordAttempts == 2)
+        #expect(recorder.pauses.first == .milliseconds(200))
+        #expect(recorder.steps == [
+            .record(windowID: 100, kind: .focus),
+            .pointer(.leftMouseDown),
+            .pointer(.leftMouseUp),
+            .action,
+            .record(windowID: 100, kind: .undo),
+        ])
+    }
+
+    @Test
+    func `a second target-changed refusal returns today's refusal without running the action`() async throws {
+        let recorder = Recorder()
+        recorder.focusRecordError = Self.targetChangedRefusal()
+        do {
+            try await recorder.session().perform(target: Self.target()) { recorder.steps.append(.action) }
+            Issue.record("Expected a preparation refusal")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .refused)
+            #expect(failure.outcome.retrySafety == .safe)
+            #expect(failure.outcome.refusalReason == .targetUnavailable)
+            #expect(failure.message.contains("Background focus preparation failed"))
+            #expect(failure.causeDescription == "The background window activation target changed before delivery.")
+        }
+        #expect(recorder.focusRecordAttempts == 2)
+        #expect(recorder.steps.isEmpty)
+    }
+
+    @Test
+    func `focus record failures other than a target-changed refusal are not retried`() async throws {
+        let failures: [any Error] = [
+            DesktopActionFailure.preDispatchRefusal(
+                reason: .operationUnsupported, message: "Target-only background window activation is unavailable."),
+            PeekabooError.permissionDeniedEventSynthesizing,
+            DesktopActionFailure.indeterminate(
+                delivery: .init(mechanism: .nativeFramework, mode: .background),
+                evidence: .completionUnknown, unitCount: .one, message: "uncertain record"),
+        ]
+        for failure in failures {
+            let recorder = Recorder()
+            recorder.focusRecordError = failure
+            await #expect(throws: DesktopActionFailure.self) {
+                try await recorder.session().perform(target: Self.target()) { recorder.steps.append(.action) }
+            }
+            #expect(recorder.focusRecordAttempts == 1)
+            #expect(recorder.pauses.isEmpty)
+        }
+    }
+
+    @Test
     func `undo record failure does not turn a completed action into a failure`() async throws {
         let recorder = Recorder()
         recorder.undoRecordError = PeekabooError.snapshotStale("window closed during the action")
@@ -128,6 +187,12 @@ struct BackgroundFocusSessionTests {
             .action, .pause,
             .record(windowID: 100, kind: .undo),
         ])
+    }
+
+    private static func targetChangedRefusal() -> DesktopActionFailure {
+        .preDispatchRefusal(
+            reason: .targetUnavailable,
+            message: "The background window activation target changed before delivery.")
     }
 
     private static func target() throws -> UIAutomationTarget.ExactWindow {
@@ -152,6 +217,10 @@ private final class Recorder {
     let environment: [String: String]
     let recordsPauses: Bool
     var focusRecordError: (any Error)?
+    /// Thrown by the next focus records, one each, before `focusRecordError` applies.
+    var transientFocusRecordErrors: [any Error] = []
+    var focusRecordAttempts = 0
+    var pauses: [Duration] = []
     var undoRecordError: (any Error)?
 
     init(environment: [String: String] = [:], recordsPauses: Bool = false) {
@@ -162,6 +231,12 @@ private final class Recorder {
     func session() -> BackgroundFocusSession {
         BackgroundFocusSession(
             postRecord: { target, kind in
+                if kind == .focus {
+                    self.focusRecordAttempts += 1
+                    if !self.transientFocusRecordErrors.isEmpty {
+                        throw self.transientFocusRecordErrors.removeFirst()
+                    }
+                }
                 if let error = kind == .focus ? self.focusRecordError : self.undoRecordError {
                     throw error
                 }
@@ -172,6 +247,7 @@ private final class Recorder {
                 self.events.append((event, pid))
             },
             sleep: { duration in
+                self.pauses.append(duration)
                 if self.recordsPauses, duration > .zero {
                     self.steps.append(.pause)
                 }
