@@ -1302,19 +1302,20 @@ private enum BoundedBackgroundWindowAX {
             return nil
         }
 
-        for window in windows {
-            let matches: Bool = {
-                guard self.applyMessagingTimeout(to: window, admission: admission) else { return false }
+        // `AXWindows` omits windows on a non-active Space; the supplement only returns the exact target.
+        return AXWindowInventorySupplement<AXUIElement>.exactWindow(
+            Int(windowID),
+            inventory: windows,
+            inventoryWindowID: { window in
+                guard self.applyMessagingTimeout(to: window, admission: admission) else { return nil }
                 defer { AXUIElementSetMessagingTimeout(window, 0) }
                 var candidateID: CGWindowID = 0
-                return AXWindowIDResolver.copyWindowID(window, into: &candidateID) == .success &&
-                    candidateID == windowID
-            }()
-            if matches {
-                return window
-            }
-        }
-        return nil
+                guard AXWindowIDResolver.copyWindowID(window, into: &candidateID) == .success else { return nil }
+                return Int(candidateID)
+            },
+            makeSupplement: {
+                .live(application: application, processIdentifier: ownerPID, deadline: admission?.deadline)
+            })
     }
 
     private static func windowServerAllowsExactMinimizedRestore(

@@ -64,6 +64,25 @@ struct AXWindowInventorySupplement<Window> {
         }
         return found
     }
+
+    /// The `AXWindows` entry carrying exactly `targetWindowID`; when the inventory omits it (a window on
+    /// another Space), the supplement's exact match. `makeSupplement` runs only in that case.
+    static func exactWindow(
+        _ targetWindowID: Int,
+        inventory: [Window],
+        inventoryWindowID: (Window) -> Int?,
+        makeSupplement: () -> Self) -> Window?
+    {
+        var inventoryWindowIDs: [Int?] = []
+        for window in inventory {
+            let windowID = inventoryWindowID(window)
+            if windowID == targetWindowID {
+                return window
+            }
+            inventoryWindowIDs.append(windowID)
+        }
+        return makeSupplement().window(matching: targetWindowID, missingFrom: inventoryWindowIDs)
+    }
 }
 
 extension AXWindowInventorySupplement where Window == AXUIElement {

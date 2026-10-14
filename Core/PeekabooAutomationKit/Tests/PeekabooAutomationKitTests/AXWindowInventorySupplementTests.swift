@@ -133,6 +133,22 @@ struct AXWindowInventorySupplementTests {
     }
 
     @Test
+    func `exact window lookup falls back to the supplement when the inventory omits the target`() {
+        let reads = Reads()
+        reads.main = 7
+        reads.remote = [3: 42]
+
+        let window = AXWindowInventorySupplement<Int>.exactWindow(
+            42,
+            inventory: [5, 7],
+            inventoryWindowID: { $0 },
+            makeSupplement: { reads.supplement() })
+
+        #expect(window == 42)
+        #expect(reads.events.prefix(2) == ["main", "focused"])
+    }
+
+    @Test
     func `remote token is the owner PID, a zero word, the coco tag, and the element identifier`() {
         let token = AXWindowInventorySupplement.remoteToken(processIdentifier: 0x0102_0304, elementIdentifier: 42)
 

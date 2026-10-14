@@ -130,15 +130,30 @@ public final class WindowIdentityService {
         else {
             return nil
         }
-        for window in windows {
-            let matches = try? window.withMessagingTimeout(messagingTimeout) { childWindow in
-                self.resolver.windowID(from: childWindow) == windowID
-            }
-            if matches == true {
-                return AXWindowHandle(app: AXApp(app), element: window)
-            }
-        }
-        return nil
+        // `AXWindows` omits windows on a non-active Space; the supplement only returns the exact target.
+        let window = AXWindowInventorySupplement<Element>.exactWindow(
+            Int(windowID),
+            inventory: windows,
+            inventoryWindowID: { window in
+                let candidateID = try? window.withMessagingTimeout(messagingTimeout) { childWindow in
+                    self.resolver.windowID(from: childWindow)
+                }
+                return candidateID.map(Int.init)
+            },
+            makeSupplement: {
+                let live = AXWindowInventorySupplement<AXUIElement>.live(
+                    application: appElement.underlyingElement,
+                    processIdentifier: app.processIdentifier)
+                return AXWindowInventorySupplement<Element>(
+                    mainWindow: { live.mainWindow().map(Element.init) },
+                    focusedWindow: { live.focusedWindow().map(Element.init) },
+                    remoteWindow: { live.remoteWindow($0).map(Element.init) },
+                    windowID: { live.windowID($0.underlyingElement) },
+                    canContinue: live.canContinue,
+                    readEnvironment: live.readEnvironment,
+                    scanLimit: live.scanLimit)
+            })
+        return window.map { AXWindowHandle(app: AXApp(app), element: $0) }
     }
 
     func findWindow(byID windowID: CGWindowID) -> AXWindowHandle? {
