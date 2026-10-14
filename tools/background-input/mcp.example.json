@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "peekaboo": {
+      "command": "/Users/abhi/Desktop/Work/projects/peekaboo/bin/peekaboo",
+      "args": [
+        "mcp"
+      ],
+      "env": {
+        "PEEKABOO_NO_REMOTE": "1",
+        "PEEKABOO_DISABLE_TOOLS": "browser"
+      }
+    }
+  }
+}
