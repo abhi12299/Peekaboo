@@ -65,6 +65,24 @@ enum WindowManagementActionOutcome {
             causeDescription: cause.map { String(describing: $0) })
     }
 
+    /// A close that was accepted while the window stayed. When the window now carries a sheet (for example
+    /// "Do you want to keep this document?"), the app is waiting for an answer, so say so.
+    static func closeRemained(dispatchCount: Int, sheetAttached: Bool) -> DesktopActionFailure {
+        guard sheetAttached else {
+            return self.suspectedNoop(
+                action: "close window",
+                delivery: self.backgroundActionDelivery,
+                dispatchCount: dispatchCount)
+        }
+        return .suspectedNoop(
+            delivery: self.backgroundActionDelivery,
+            unitCount: self.dispatchUnitCount(dispatchCount),
+            message: "The close window request was accepted, but a sheet opened on the window " +
+                "(for example a save or keep-document prompt), so the window stayed open",
+            hint: "Answer the sheet with the dialog tool (list, then click or dismiss), then observe the window.",
+            causeDescription: nil)
+    }
+
     static func dispatchedUnverified(
         action: String,
         delivery: DesktopActionOutcome.Delivery,

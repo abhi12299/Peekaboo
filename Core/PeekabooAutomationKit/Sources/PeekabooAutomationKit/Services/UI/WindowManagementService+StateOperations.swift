@@ -77,10 +77,10 @@ extension WindowManagementService {
                         reason: "Window close operation failed")
                 }
                 guard attempt.disappeared else {
-                    throw WindowManagementActionOutcome.suspectedNoop(
-                        action: "close window",
-                        delivery: WindowManagementActionOutcome.backgroundActionDelivery,
-                        dispatchCount: attempt.dispatchCount)
+                    throw WindowManagementActionOutcome.closeRemained(
+                        dispatchCount: attempt.dispatchCount,
+                        sheetAttached: await BoundedBackgroundWindowAX.hasAttachedSheet(
+                            expectedIdentity: expectedIdentity))
                 }
                 return WindowManagementActionOutcome.confirmedChange(
                     delivery: WindowManagementActionOutcome.backgroundActionDelivery,
@@ -1033,6 +1033,19 @@ func waitForRestoredWindowToSettle(
     }
 }
 
+/// Whether a window now carries a sheet: listed in `AXSheets`, or a child with the sheet role (some apps
+/// expose an attached sheet only as a child).
+func windowHasAttachedSheet<Element>(
+    sheets: [Element]?,
+    children: [Element]?,
+    role: (Element) -> String?) -> Bool
+{
+    if sheets?.isEmpty == false {
+        return true
+    }
+    return children?.contains { role($0) == (kAXSheetRole as String) } == true
+}
+
 func exactWindowIDForStateMutation(
     target: WindowTarget,
     resolvedWindows: [ServiceWindowInfo]) throws -> Int
@@ -1130,6 +1143,37 @@ private enum BoundedBackgroundWindowAX {
                 processStartIdentityAfterScan: processStartIdentityAfterScan,
                 scan: scan)
         }
+    }
+
+    /// Read-only: whether the exact window now carries a sheet. Unreadable reads count as no sheet.
+    static func hasAttachedSheet(expectedIdentity: WindowMutationIdentity) async -> Bool {
+        await self.perform(expectedIdentity: expectedIdentity) {
+            guard SystemIdentityResolver.validateWindowMutationOwnerGeneration(expectedIdentity),
+                  let windowID = CGWindowID(exactly: expectedIdentity.windowID),
+                  let window = self.exactWindow(windowID: windowID, ownerPID: expectedIdentity.ownerProcessIdentifier)
+            else {
+                return false
+            }
+            return AXChildWindowMessagingTimeout.perform(on: window, timeout: self.messagingTimeout) { window in
+                windowHasAttachedSheet(
+                    sheets: self.elementArrayAttribute("AXSheets", of: window),
+                    children: self.elementArrayAttribute(kAXChildrenAttribute as String, of: window),
+                    role: { child in
+                        AXChildWindowMessagingTimeout.perform(on: child, timeout: self.messagingTimeout) {
+                            var value: CFTypeRef?
+                            guard AXUIElementCopyAttributeValue($0, kAXRoleAttribute as CFString, &value) == .success
+                            else { return nil }
+                            return value as? String
+                        }
+                    })
+            }
+        }
+    }
+
+    private static func elementArrayAttribute(_ name: String, of element: AXUIElement) -> [AXUIElement]? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success else { return nil }
+        return value as? [AXUIElement]
     }
 
     static func restoredSettleSample(expectedIdentity: WindowMutationIdentity) async -> RestoredWindowSettleSample? {
