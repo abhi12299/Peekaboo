@@ -30,8 +30,8 @@ public struct AppTool: MCPTool {
             Always include the `action` field in your JSON payload. Examples:
             - { "action": "list" }
             - Background launch without activation: { "action": "launch", "name": "Finder" }
-            - Open a document without activation (app running or not), then find its window with `window list`
-              or `see`: { "action": "launch", "name": "TextEdit", "open": "/Users/me/notes.txt" }
+            - Open a document without activation (app running or not); the result names the window ID showing it:
+              { "action": "launch", "name": "TextEdit", "open": "/Users/me/notes.txt", "waitForWindow": true }
             - { "action": "quit", "name": "Slack", "force": false }
             """
         }

@@ -50,14 +50,17 @@ extension AppToolActions {
             actionResult,
             request: launchRequest)
 
+        let openedDocuments = !documentURLs.isEmpty && outcome?.state != .confirmedNoChange
+        let documentWindows = openedDocuments ? await self.documentWindows(for: documentURLs, in: app) : []
         let timing = self.executionTimeString(since: request.startTime)
         // A legacy service without canonical outcomes cannot cold-launch in the background, so its successful
         // background launch is still the already-running no-op.
-        let message = if !documentURLs.isEmpty, outcome?.state != .confirmedNoChange {
+        let message = if openedDocuments {
             "\(AgentDisplayTokens.Status.success) Opened \(documentURLs.map(\.path).joined(separator: ", ")) "
                 + "in \(app.name) (PID: \(app.processIdentifier))"
                 + (request.foreground ? "" : " without activating it")
-                + " in \(timing). Use `window list` or `see` on \(app.name) to find the new window."
+                + " in \(timing). "
+                + Self.documentWindowHint(documentWindows, documents: documentURLs, appName: app.name)
         } else if outcome?.state == .confirmedNoChange ||
             (outcome == nil && !launchRequest.activates)
         {
@@ -82,7 +85,7 @@ extension AppToolActions {
                 "window_ready": .bool((app.windowIDs?.count ?? app.windowCount) > 0),
                 "window_ids": app.windowIDs.map { .array($0.map { .double(Double($0)) }) } ?? .null,
                 "window_identity": .string(app.windowIDs == nil ? "unknown" : "exact"),
-            ],
+            ].merging(Self.documentWindowMeta(documentWindows)) { $1 },
             outcome: outcome)
     }
 
