@@ -38,6 +38,31 @@ final class DesktopObservationReceiptRecoveryTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: outputPath.path))
     }
 
+    func testPassiveObservationPausesBeforeRetryingAChangedTarget() async throws {
+        let bounds = CGRect(x: 100, y: 100, width: 500, height: 400)
+        let resolver = RecordingReceiptTargetResolver(target: Self.receiptedTarget(bounds: bounds))
+        var captures = [
+            Self.receiptedCapture(bounds: CGRect(x: 101, y: 100, width: 500, height: 400)),
+            Self.receiptedCapture(bounds: bounds),
+        ]
+        let service = DesktopObservationService(
+            screenCapture: ReceiptRecoveryCaptureService(resultProvider: { captures.removeFirst() }),
+            automation: ReceiptRecoveryAutomationService(),
+            targetResolver: resolver)
+        var pauses: [(duration: Duration, resolvesBefore: Int)] = []
+        service.changedTargetRetryPause = { duration in
+            pauses.append((duration, resolver.resolveCalls))
+        }
+
+        _ = try await service.observe(DesktopObservationRequest(
+            target: .app(identifier: "Fixture", window: .automatic),
+            detection: DesktopDetectionOptions(mode: .none)))
+
+        XCTAssertEqual(pauses.map(\.duration), [.milliseconds(200)])
+        XCTAssertEqual(pauses.map(\.resolvesBefore), [1])
+        XCTAssertEqual(resolver.resolveCalls, 2)
+    }
+
     func testPassiveObservationStopsAfterOneChangedCaptureReceiptRetry() async throws {
         let bounds = CGRect(x: 100, y: 100, width: 500, height: 400)
         let resolver = RecordingReceiptTargetResolver(target: Self.receiptedTarget(bounds: bounds))

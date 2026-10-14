@@ -382,6 +382,11 @@ public final class DesktopObservationService: DesktopObservationActionResultProv
     let operationLaneCoordinator: DesktopOperationLaneCoordinator
     let processStartIdentityProvider: @Sendable (pid_t) -> UInt64?
     let windowMutationIdentityProvider: @Sendable (CGWindowID) -> WindowMutationIdentity?
+    /// Waits before the one retry of a passive capture whose target changed, so a window that moved or was
+    /// briefly unlisted while the user switched apps can settle.
+    var changedTargetRetryPause: @MainActor (Duration) async -> Void = { duration in
+        try? await Task.sleep(for: duration)
+    }
 
     public init(
         screenCapture: any ScreenCaptureServiceProtocol,
@@ -1020,6 +1025,7 @@ public final class DesktopObservationService: DesktopObservationActionResultProv
             guard Self.allowsPassiveCaptureReceiptRecovery(request), case .targetChanged = error else {
                 throw error
             }
+            await self.changedTargetRetryPause(.milliseconds(200))
             try Task.checkCancellation()
             return try await operation()
         }
