@@ -173,6 +173,82 @@ struct MCPActionObservationTests {
     }
 
     @Test
+    func `typing that fails with a plain host error reports a canonical outcome with its cause`() async throws {
+        let fixture = try await MCPSnapshotMutationTestFixture.make()
+        fixture.automation.typeError = PeekabooError.invalidInput(
+            field: "target",
+            reason: "Exact focused-element receipt is stale: frame mismatch.")
+        let see = ObservationProbe(response: ToolResponse.text("observed window"))
+
+        let response = try await fixture.context.execute(
+            tool: TypeTool(context: fixture.context).observing(with: see),
+            arguments: ToolArguments(raw: ["snapshot": fixture.snapshotID, "text": "52514"]))
+
+        Self.expectCanonicalUnknownFailure(response, cause: "Exact focused-element receipt is stale")
+        #expect(see.log.arguments.isEmpty)
+    }
+
+    @Test
+    func `a click that fails with a plain host error reports a canonical outcome with its cause`() async throws {
+        let fixture = try await MCPSnapshotMutationTestFixture.make()
+        fixture.automation.mutationError = PeekabooError.commandFailed("Window server rejected the click.")
+
+        let response = try await fixture.context.execute(
+            tool: ClickTool(context: fixture.context),
+            arguments: ToolArguments(raw: ["snapshot": fixture.snapshotID, "on": "T1", "wait_for": 0]))
+
+        Self.expectCanonicalUnknownFailure(response, cause: "Window server rejected the click.")
+    }
+
+    @Test
+    func `a scroll that fails with a plain host error reports a canonical outcome with its cause`() async throws {
+        let fixture = try await MCPSnapshotMutationTestFixture.make()
+        fixture.automation.mutationError = PeekabooError.commandFailed("Window server rejected the scroll.")
+
+        let response = try await fixture.context.execute(
+            tool: ScrollTool(context: fixture.context),
+            arguments: ToolArguments(raw: ["snapshot": fixture.snapshotID, "on": "T1", "direction": "down"]))
+
+        Self.expectCanonicalUnknownFailure(response, cause: "Window server rejected the scroll.")
+    }
+
+    @Test
+    func `a set value that fails with a plain host error reports a canonical outcome with its cause`() async throws {
+        let fixture = try await MCPSnapshotMutationTestFixture.make()
+        fixture.automation.mutationError = PeekabooError.commandFailed("The element rejected AXValue.")
+
+        let response = try await fixture.context.execute(
+            tool: SetValueTool(context: fixture.context),
+            arguments: ToolArguments(raw: ["snapshot": fixture.snapshotID, "on": "T1", "value": "synthetic"]))
+
+        Self.expectCanonicalUnknownFailure(response, cause: "The element rejected AXValue.")
+    }
+
+    @Test
+    func `an action that fails with a plain host error reports a canonical outcome with its cause`() async throws {
+        let fixture = try await MCPSnapshotMutationTestFixture.make()
+        fixture.automation.mutationError = PeekabooError.commandFailed("The element rejected AXIncrement.")
+
+        let response = try await fixture.context.execute(
+            tool: ActionTool(context: fixture.context),
+            arguments: ToolArguments(raw: ["snapshot": fixture.snapshotID, "on": "T1", "action": "AXIncrement"]))
+
+        Self.expectCanonicalUnknownFailure(response, cause: "The element rejected AXIncrement.")
+    }
+
+    @Test
+    func `a text selection failing with a plain host error reports a canonical outcome with its cause`() async throws {
+        let fixture = try await MCPSnapshotMutationTestFixture.make()
+        fixture.automation.mutationError = PeekabooError.commandFailed("The element rejected AXSelectedTextRange.")
+
+        let response = try await fixture.context.execute(
+            tool: SelectTextTool(context: fixture.context),
+            arguments: ToolArguments(raw: ["snapshot": fixture.snapshotID, "on": "T1", "text": "needle"]))
+
+        Self.expectCanonicalUnknownFailure(response, cause: "The element rejected AXSelectedTextRange.")
+    }
+
+    @Test
     func `a failed observation of a window that is still open is appended without failing the action`() async throws {
         let fixture = try await MCPSnapshotMutationTestFixture.make()
         fixture.automation.uiAutomationOutcomeScript.setDefaultOutcome(Self.unverified)
@@ -282,6 +358,21 @@ struct MCPActionObservationTests {
     private static let unverified = DesktopActionOutcome.dispatchedUnverified(
         delivery: .init(mechanism: .windowTargetedEvents, mode: .background),
         evidence: .deliveryAccepted)
+
+    private static func expectCanonicalUnknownFailure(_ response: ToolResponse, cause: String) {
+        #expect(response.isError)
+        let text = Self.text(response)
+        #expect(text.contains("may not have been delivered"), "\(text)")
+        #expect(text.contains(cause), "\(text)")
+        #expect(!text.contains("without valid canonical result semantics"))
+        guard case let .valid(projection) =
+            MCPToolResponseMetadataProjector.actionOutcomeResolution(from: response.meta)
+        else {
+            Issue.record("Expected a valid canonical outcome, got \(String(describing: response.meta))")
+            return
+        }
+        #expect(projection.outcome.state == .indeterminate)
+    }
 
     private static func text(_ response: ToolResponse) -> String {
         response.content.compactMap { content -> String? in

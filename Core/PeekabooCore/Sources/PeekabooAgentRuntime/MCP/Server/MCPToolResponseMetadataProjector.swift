@@ -237,6 +237,26 @@ enum MCPToolResponseMetadataProjector {
         }
     }
 
+    /// A plain error from the host does not say whether the action reached the app, so it is reported as a
+    /// canonical indeterminate outcome that keeps the cause, instead of a bare error without result semantics.
+    static func unknownCompletionResponse(
+        action: String,
+        error: any Error,
+        delivery: DesktopActionOutcome.Delivery? = nil,
+        additionalFields: [String: Value] = [:]) -> ToolResponse
+    {
+        let failure = DesktopActionFailure.indeterminate(
+            delivery: delivery,
+            evidence: .completionUnknown,
+            message: "\(action) may not have been delivered: \(error.localizedDescription)",
+            hint: "Observe the target window before retrying.",
+            causeDescription: error.localizedDescription)
+        return (try? self.errorResponse(
+            for: failure,
+            invalidatedSnapshotID: nil,
+            additionalFields: additionalFields)) ?? ToolResponse.error(failure.message)
+    }
+
     private enum ProjectionError: Error {
         case expectedObject
     }

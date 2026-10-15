@@ -94,7 +94,10 @@ public struct ActionTool: MCPTool {
                 additionalFields: ObservationActionResultSupport.standardErrorFields(failure))
         } catch {
             self.logger.error("action failed: \(error.localizedDescription)")
-            return ToolResponse.error("Failed to perform action: \(error.localizedDescription)")
+            guard !(error is CancellationError) else {
+                return ToolResponse.error("Failed to perform action: \(error.localizedDescription)")
+            }
+            return MCPToolResponseMetadataProjector.unknownCompletionResponse(action: "Action", error: error)
         }
     }
 

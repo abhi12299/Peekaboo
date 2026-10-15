@@ -210,7 +210,10 @@ public struct DragTool: MCPTool, MCPWindowObservingTool {
                     for: failure, uiSnapshots: self.context.uiSnapshots, snapshotID: request.snapshotId)
             }
             self.logger.error("Drag execution failed: \(error.localizedDescription)")
-            return ToolResponse.error("Failed to perform drag operation: \(error.localizedDescription)")
+            guard !(error is CancellationError) else {
+                return ToolResponse.error("Failed to perform drag operation: \(error.localizedDescription)")
+            }
+            return MCPToolResponseMetadataProjector.unknownCompletionResponse(action: "Drag", error: error)
         }
     }
 }

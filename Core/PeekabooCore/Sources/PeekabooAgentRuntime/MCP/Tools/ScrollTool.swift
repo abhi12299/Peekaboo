@@ -76,7 +76,10 @@ public struct ScrollTool: MCPTool, MCPWindowObservingTool {
                 reason: error.refusalReason)
         } catch {
             self.logger.error("Scroll execution failed: \(error)")
-            return ToolResponse.error("Failed to perform scroll: \(error.localizedDescription)")
+            guard !(error is CancellationError) else {
+                return ToolResponse.error("Failed to perform scroll: \(error.localizedDescription)")
+            }
+            return MCPToolResponseMetadataProjector.unknownCompletionResponse(action: "Scroll", error: error)
         }
     }
 

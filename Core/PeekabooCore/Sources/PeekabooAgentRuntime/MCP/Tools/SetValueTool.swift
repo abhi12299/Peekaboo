@@ -107,7 +107,10 @@ public struct SetValueTool: MCPTool {
                 additionalFields: ObservationActionResultSupport.standardErrorFields(failure))
         } catch {
             self.logger.error("set_value failed: \(error.localizedDescription)")
-            return ToolResponse.error("Failed to set value: \(error.localizedDescription)")
+            guard !(error is CancellationError) else {
+                return ToolResponse.error("Failed to set value: \(error.localizedDescription)")
+            }
+            return MCPToolResponseMetadataProjector.unknownCompletionResponse(action: "Set value", error: error)
         }
     }
 

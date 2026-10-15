@@ -134,7 +134,11 @@ public struct TypeTool: MCPTool, MCPWindowObservingTool {
                 additionalFields: additionalFields)
         } catch {
             self.logger.error("Type execution failed: \(error)")
-            return ToolResponse.error("Failed to type text: \(error.localizedDescription)")
+            return MCPToolResponseMetadataProjector.unknownCompletionResponse(
+                action: "Typing",
+                error: error,
+                delivery: mutationTracker.delivery,
+                additionalFields: mutationTracker.compatibilityFields)
         }
     }
 

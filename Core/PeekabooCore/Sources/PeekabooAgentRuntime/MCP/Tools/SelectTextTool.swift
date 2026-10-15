@@ -114,7 +114,10 @@ public struct SelectTextTool: MCPTool {
                 snapshotID: snapshotId,
                 additionalFields: ObservationActionResultSupport.standardErrorFields(failure))
         } catch {
-            return ToolResponse.error("Text selection failed: \(error.localizedDescription)")
+            guard !(error is CancellationError) else {
+                return ToolResponse.error("Text selection failed: \(error.localizedDescription)")
+            }
+            return MCPToolResponseMetadataProjector.unknownCompletionResponse(action: "Text selection", error: error)
         }
     }
 }

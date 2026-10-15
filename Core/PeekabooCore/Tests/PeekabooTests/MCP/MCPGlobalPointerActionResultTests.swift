@@ -76,6 +76,49 @@ struct MCPGlobalPointerActionResultTests {
         #expect(automation.globalDragCount == 0)
     }
 
+    @Test
+    func `background drag failing with a plain host error reports a canonical outcome with its cause`() async throws {
+        let automation = ExactDragOutcomeAutomationService(accessibilityGranted: true)
+        automation.plainError = PeekabooError.commandFailed("Window server rejected the drag.")
+        let windows = MCPFocusResultWindowService()
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            windows: windows,
+            snapshots: InMemorySnapshotManager())
+        let snapshot = try await MCPToolTestHelpers.createSnapshot(in: context)
+        let bounds = try #require(windows.identity.capturedBounds)
+        await snapshot.setTargetMetadata(from: WindowContext(
+            applicationProcessId: windows.identity.ownerProcessIdentifier,
+            applicationProcessStartIdentity: windows.identity.ownerProcessStartIdentity,
+            windowID: windows.identity.windowID,
+            windowBounds: bounds,
+            windowMutationIdentity: windows.identity))
+        try await MCPToolTestHelpers.publishSnapshotMetadata(snapshot, in: context)
+
+        let response = try await context.execute(tool: DragTool(context: context), arguments: ToolArguments(raw: [
+            "from_coords": "\(bounds.midX),\(bounds.midY)",
+            "to_coords": "\(bounds.midX + 10),\(bounds.midY + 10)",
+            "snapshot": await snapshot.id,
+            "steps": 5,
+        ]))
+
+        #expect(response.isError)
+        guard case let .text(message, _, _)? = response.content.first else {
+            Issue.record("Expected a text response")
+            return
+        }
+        #expect(message.contains("may not have been delivered"), "\(message)")
+        #expect(message.contains("Window server rejected the drag."), "\(message)")
+        guard case let .valid(projection) =
+            MCPToolResponseMetadataProjector.actionOutcomeResolution(from: response.meta)
+        else {
+            Issue.record("Expected a valid canonical outcome, got \(String(describing: response.meta))")
+            return
+        }
+        #expect(projection.outcome.state == .indeterminate)
+        #expect(automation.exactDragCount == 1)
+    }
+
     @Test(arguments: ["latest", "most-recent", "most_recent", "", " "])
     func `background drag refuses nonconcrete snapshots before service invocation`(snapshot: String) async throws {
         let automation = ExactDragOutcomeAutomationService(accessibilityGranted: true)
@@ -292,6 +335,7 @@ UIAutomationGlobalPointerActionResultProviding {
 private final class ExactDragOutcomeAutomationService: MockAutomationService, ExactWindowDragServiceProtocol {
     let supportsExactWindowDrag = true
     var interrupted = false
+    var plainError: (any Error)?
     private(set) var exactDragCount = 0
     private(set) var globalDragCount = 0
 
@@ -305,6 +349,9 @@ private final class ExactDragOutcomeAutomationService: MockAutomationService, Ex
     {
         try request.validate()
         self.exactDragCount += 1
+        if let plainError {
+            throw plainError
+        }
         if self.interrupted {
             throw DesktopActionFailure.indeterminate(
                 delivery: .init(mechanism: .windowTargetedEvents, mode: .background),

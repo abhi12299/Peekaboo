@@ -1126,7 +1126,7 @@ extension MCPDesktopActionOutcomeProjectionTests {
 
     @Test
     @MainActor
-    func `generic typing error after no change focus does not invent a mutation`() async throws {
+    func `generic typing error after no change focus is indeterminate and keeps the snapshot`() async throws {
         let automation = StubAutomationService()
         automation.actionOutcome = .confirmedNoChange()
         automation.targetedTypeError = PeekabooError.invalidInput("typing refused before dispatch")
@@ -1139,9 +1139,16 @@ extension MCPDesktopActionOutcomeProjectionTests {
             "snapshot": snapshotID,
         ]))
 
+        // A plain error does not say whether keys reached the app (the text can already be typed), so it is
+        // canonically indeterminate with its cause, and the snapshot is not invalidated on that guess.
         #expect(response.isError)
-        #expect(response.meta?.objectValue?["mutation_dispatched"] == nil)
-        #expect(response.meta?.objectValue?["state"] == nil)
+        #expect(response.meta?.objectValue?["state"] == .string("indeterminate"))
+        #expect(response.meta?.objectValue?["evidence"] == .string("completion_unknown"))
+        guard case let .text(message, _, _)? = response.content.first else {
+            Issue.record("Expected a text response")
+            return
+        }
+        #expect(message.contains("typing refused before dispatch"), "\(message)")
         #expect(await context.uiSnapshots.getSnapshot(id: nil)?.id == snapshotID)
     }
 

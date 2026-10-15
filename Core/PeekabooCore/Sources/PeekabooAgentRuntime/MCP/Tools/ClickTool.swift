@@ -235,7 +235,10 @@ public struct ClickTool: MCPTool, MCPWindowObservingTool {
         } catch {
             await self.discardObservation(id: waitedSnapshotID)
             self.logger.error("Click execution failed: \(error.localizedDescription)")
-            return ToolResponse.error("Failed to perform click: \(error.localizedDescription)")
+            return MCPToolResponseMetadataProjector.unknownCompletionResponse(
+                action: "Click",
+                error: error,
+                additionalFields: ["click_type": .string(request.intent.automationType.rawValue)])
         }
     }
 
