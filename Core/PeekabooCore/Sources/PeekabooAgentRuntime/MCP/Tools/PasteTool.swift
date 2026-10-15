@@ -433,9 +433,14 @@ public struct PasteTool: MCPTool, MCPWindowObservingTool {
                 clipboardCleanupStatus: clipboardCleanupStatus)
         }
         self.logger.error("Paste failed: \(error.localizedDescription)")
-        return ToolResponse.error(
-            "Paste failed: \(error.localizedDescription)",
-            meta: clipboardCleanupStatus.map { .object(["clipboard_cleanup_status": .string($0.rawValue)]) })
+        // Plain errors are known pre-dispatch failures (outcome-bearing failures are caught before this), so they
+        // are reported as a canonical refusal that keeps the cause instead of a bare error without result
+        // semantics, which background-only mode would replace with a generic message.
+        let cause = error.localizedDescription.trimmingCharacters(in: CharacterSet(charactersIn: ". "))
+        return MCPToolResponseMetadataProjector.preDispatchRefusalResponse(
+            message: "Paste failed: \(cause). Nothing was pasted; it is safe to retry.",
+            reason: .targetUnavailable,
+            additionalFields: clipboardCleanupStatus.map { ["clipboard_cleanup_status": .string($0.rawValue)] } ?? [:])
     }
 
     @MainActor

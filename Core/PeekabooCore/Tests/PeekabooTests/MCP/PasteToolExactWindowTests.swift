@@ -556,15 +556,54 @@ struct PasteToolExactWindowTests {
             "text": "not dispatched",
         ]))
 
+        let text = self.responseText(response)
         #expect(response.isError)
-        #expect(self.responseText(response).contains("Paste failed"))
-        #expect(!self.responseText(response).contains("indeterminate"))
-        #expect(response.meta == nil)
+        #expect(text.contains("Paste failed"), "\(text)")
+        #expect(text.contains("simulated pre-dispatch validation failure"), "\(text)")
+        #expect(text.contains("Nothing was pasted; it is safe to retry."), "\(text)")
+        #expect(!text.contains("indeterminate"))
+        guard case let .valid(projection) =
+            MCPToolResponseMetadataProjector.actionOutcomeResolution(from: response.meta)
+        else {
+            Issue.record("Expected a valid canonical outcome, got \(String(describing: response.meta))")
+            return
+        }
+        #expect(projection.outcome.state == .refused)
+        #expect(projection.outcome.dispatchState == .none)
+        #expect(response.meta?.objectValue?["retry_safe"] == .bool(true))
         #expect(automation.targetedTypeActionsCalls.count == 1)
         #expect(automation.targetedTypeActionsCalls.first?.expectedProcessIdentity ==
             AutomationTestFixtures.processIdentity(processIdentifier: 333, processStartIdentity: 33))
         #expect(automation.lastTypeActions == nil)
         self.expectClipboardUntouched(clipboard)
+    }
+
+    @Test
+    @MainActor
+    func `Known pre-dispatch text failure keeps its cause in background-only mode`() async throws {
+        let application = AutomationTestFixtures.application(
+            processIdentifier: 333,
+            processStartIdentity: 33,
+            bundleIdentifier: "com.example.editor",
+            name: "Editor")
+        let automation = PredispatchOutcomeProcessPasteAutomationService(accessibilityGranted: true)
+        let context = await MCPToolTestHelpers.makeContext(
+            automation: automation,
+            applications: MockApplicationService(applications: [application]),
+            clipboard: ExactPasteClipboardService(current: ClipboardReadResult(
+                utiIdentifier: UTType.plainText.identifier,
+                data: Data("before".utf8),
+                textPreview: "before")))
+
+        let response = try await context.execute(
+            tool: PasteTool(context: context),
+            arguments: ToolArguments(raw: ["app": "Editor", "text": "not dispatched"]))
+
+        let text = self.responseText(response)
+        #expect(response.isError)
+        #expect(text.contains("simulated pre-dispatch validation failure"), "\(text)")
+        #expect(!text.contains("without valid canonical result semantics"), "\(text)")
+        #expect(response.meta?.objectValue?["retry_safe"] == .bool(true))
     }
 
     @Test
@@ -921,6 +960,20 @@ private final class PartialProcessPasteAutomationService: MockAutomationService 
 
 @MainActor
 private final class PredispatchProcessPasteAutomationService: MockAutomationService {
+    init(accessibilityGranted: Bool) {
+        super.init(accessibilityGranted: accessibilityGranted)
+        self.pinnedTypeError = { _ in
+            PeekabooError.invalidInput("simulated pre-dispatch validation failure")
+        }
+    }
+}
+
+/// Same pre-dispatch failure from a host that reports canonical outcomes, so background-only mode admits it.
+private final class PredispatchOutcomeProcessPasteAutomationService: MockAutomationService,
+    ScriptedUIAutomationActionOutcomeProviding
+{
+    let uiAutomationOutcomeScript = UIAutomationOutcomeScript()
+
     init(accessibilityGranted: Bool) {
         super.init(accessibilityGranted: accessibilityGranted)
         self.pinnedTypeError = { _ in
