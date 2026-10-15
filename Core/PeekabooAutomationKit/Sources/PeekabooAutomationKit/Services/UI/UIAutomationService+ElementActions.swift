@@ -397,6 +397,14 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
         return "\(element.id) \(element.type.rawValue): \(label)"
     }
 
+    /// Element actions do not depend on where the window is, so the receipted window also qualifies when macOS
+    /// lists it shifted to a Space that is not visible. Identity (ID, owner, process generation) still must match.
+    private var elementMutationWindowIdentityValidator: @Sendable (WindowMutationIdentity, CGRect) -> Bool {
+        let exact = self.exactWindowIdentityValidator
+        let spaceShifted = self.spaceShiftedWindowIdentityValidator
+        return { identity, bounds in exact(identity, bounds) || spaceShifted(identity, bounds) }
+    }
+
     private func elementMutationCaptureReceipt(snapshotId: String) async throws
         -> DesktopOperationPlan.CaptureReceipt
     {
@@ -419,7 +427,7 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
             detectionResult: detectionResult,
             requireExactWindow: false,
             processStartIdentityProvider: self.processStartIdentityProvider,
-            exactWindowIdentityValidator: self.exactWindowIdentityValidator)
+            exactWindowIdentityValidator: self.elementMutationWindowIdentityValidator)
     }
 
     private func validateElementMutationTarget(
@@ -430,7 +438,7 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
             context: target.windowContext,
             receipt: receipt,
             processStartIdentityProvider: self.processStartIdentityProvider,
-            exactWindowIdentityValidator: self.exactWindowIdentityValidator)
+            exactWindowIdentityValidator: self.elementMutationWindowIdentityValidator)
         guard let processIdentifier = receipt.processIdentifier,
               AutomationElementResolver.processIdentifier(of: target.element) == processIdentifier
         else {

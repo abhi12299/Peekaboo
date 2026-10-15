@@ -63,7 +63,8 @@ extension MCPToolContext {
         toolName: String,
         snapshotID: String,
         mirroredSnapshot: UISnapshot,
-        detectionResult: ElementDetectionResult) async throws -> AuthorizedDesktopTargetPlan
+        detectionResult: ElementDetectionResult,
+        acceptsWindowSpaceShift: Bool = false) async throws -> AuthorizedDesktopTargetPlan
     {
         let mirroredReceipt = try mirroredSnapshot.targetReceipt()
         let mirroredIdentity = try mirroredReceipt.requireIdentity()
@@ -99,17 +100,23 @@ extension MCPToolContext {
             // live frame differs, e.g. while a just-launched app settles its window. Read it once more before
             // refusing; a frame that still differs is refused as before.
             try await Task.sleep(for: Self.windowFrameSettleDelay)
-            authority = try await self.rebindingSettledWindowFrame(identity, snapshotID: snapshotID)
+            authority = try await self.rebindingSettledWindowFrame(
+                identity,
+                snapshotID: snapshotID,
+                acceptsWindowSpaceShift: acceptsWindowSpaceShift)
         }
         return AuthorizedDesktopTargetPlan(mutationAuthority: authority)
     }
 
     /// Same as `receiptBoundMutationAuthority(for:)`, but keeps the live window it read so a frame that still
-    /// differs is refused with both frames.
+    /// differs is refused with both frames. When `acceptsWindowSpaceShift` is set, a window that macOS now lists
+    /// shifted to a Space that is not visible (`DesktopTargetPlanning.WindowSpaceShift`) is authorized as it is
+    /// now: same window ID, owner process generation and size, with the snapshot's editor moved along with it.
     @MainActor
     private func rebindingSettledWindowFrame(
         _ identity: DesktopTargetIdentity,
-        snapshotID: String) async throws -> DesktopTargetPlanning.ReceiptBoundMutationAuthorityPlan
+        snapshotID: String,
+        acceptsWindowSpaceShift: Bool) async throws -> DesktopTargetPlanning.ReceiptBoundMutationAuthorityPlan
     {
         let planner = DesktopTargetPlanning.MutationAuthorityPlanner(
             applications: self.applications,
@@ -122,6 +129,16 @@ extension MCPToolContext {
         do {
             return try planner.bind(identity: identity, authority: live)
         } catch DesktopTargetIdentityError.contradictoryWindowBounds {
+            if acceptsWindowSpaceShift,
+               let snapshotWindow = identity.exactWindow,
+               let liveWindow = live.window,
+               let rebased = try DesktopTargetPlanning.WindowSpaceShift.rebasing(
+                   snapshotWindow,
+                   onto: liveWindow.identity,
+                   liveIsOnScreen: liveWindow.selectionWindow.isOnScreen)
+            {
+                return try planner.bind(identity: DesktopTargetIdentity(exactWindow: rebased), authority: live)
+            }
             throw SnapshotWindowFrameChanged(
                 windowID: identity.exactWindow?.identity.windowID,
                 snapshotID: snapshotID,
@@ -148,6 +165,17 @@ extension MCPToolContext {
             return "window \(self.windowID.map(String.init) ?? "?") moved or resized after snapshot " +
                 "'\(self.snapshotID)' was taken (\(frames)); run `see` again and use the new snapshot"
         }
+    }
+
+    /// Whether a background snapshot mutation may run on a window that only moved to another Space. Keyboard input
+    /// and Accessibility element actions do not use window coordinates. Coordinate input (pixel-focus typing,
+    /// clicks, scrolls, drags) is computed from the captured frame and is refused; `click` also stays refused
+    /// because its leaf chooses between an Accessibility press and a coordinate click only at dispatch.
+    static func acceptsWindowSpaceShift(toolName: String, arguments: ToolArguments) -> Bool {
+        guard ["press", "type", "paste", "set_value", "action", "select_text"].contains(toolName) else {
+            return false
+        }
+        return arguments.getValue(for: "coords") == nil && arguments.getValue(for: "coordinate_reference") == nil
     }
 
     /// Pause before re-reading a live window frame that disagreed with its snapshot.

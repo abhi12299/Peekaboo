@@ -88,7 +88,110 @@ struct MCPSnapshotWindowBoundsRecheckTests {
         #expect(!Self.text(response).contains("moved or resized"))
     }
 
+    @Test
+    func `a set value on a window that only moved to another Space runs`() async throws {
+        let fixture = try await MCPSnapshotMutationTestFixture.make()
+        fixture.automation.uiAutomationOutcomeScript.setDefaultOutcome(.dispatchedUnverified(
+            delivery: .init(mechanism: .accessibilityValue, mode: .background),
+            evidence: .deliveryAccepted))
+        let captured = try Self.capturedWindow(fixture)
+        fixture.windows.defaultInventorySequence = [.complete([Self.onAnotherSpace(captured)])]
+
+        let response = try await fixture.context.execute(
+            tool: SetValueTool(context: fixture.context),
+            arguments: ToolArguments(raw: ["snapshot": fixture.snapshotID, "on": "T1", "value": "synthetic"]))
+
+        #expect(!Self.text(response).contains("moved or resized"), "\(Self.text(response))")
+        #expect(fixture.automation.setValueCalls == 1)
+    }
+
+    @Test
+    func `a click on a window that only moved to another Space is still refused`() async throws {
+        let fixture = try await MCPSnapshotMutationTestFixture.make()
+        let captured = try Self.capturedWindow(fixture)
+        fixture.windows.defaultInventorySequence = [.complete([Self.onAnotherSpace(captured)])]
+
+        let response = try await Self.click(fixture)
+
+        #expect(response.isError)
+        #expect(fixture.automation.mutationCalls == 0)
+        #expect(Self.text(response).contains("moved or resized"), "\(Self.text(response))")
+        #expect(Self.text(response).contains("not on screen"), "\(Self.text(response))")
+    }
+
+    @Test
+    func `a key press on a window that only moved to another Space passes the snapshot frame check`() async throws {
+        let fixture = try await MCPSnapshotMutationTestFixture.make()
+        let captured = try Self.capturedWindow(fixture)
+        fixture.windows.defaultInventorySequence = [.complete([Self.onAnotherSpace(captured)])]
+
+        let response = try await fixture.context.execute(
+            tool: PressTool(context: fixture.context),
+            arguments: ToolArguments(raw: ["snapshot": fixture.snapshotID, "keys": ["cmd+s"]]))
+
+        #expect(!Self.text(response).contains("moved or resized"), "\(Self.text(response))")
+    }
+
+    @Test
+    func `a key press on a window that only moved to another Space targets that window as it is now`() async throws {
+        let fixture = try await MCPSnapshotMutationTestFixture.make()
+        let captured = try Self.capturedWindow(fixture)
+        fixture.windows.defaultInventorySequence = [.complete([Self.onAnotherSpace(captured)])]
+
+        let response = try await fixture.context.execute(
+            tool: PressTool(context: fixture.context),
+            arguments: ToolArguments(raw: ["snapshot": fixture.snapshotID, "keys": ["cmd+s"]]))
+
+        #expect(!Self.text(response).contains("do not identify the same exact process/window receipt"),
+                "\(Self.text(response))")
+    }
+
+    @Test
+    func `typing on a window that only moved to another Space targets that window as it is now`() async throws {
+        let fixture = try await MCPSnapshotMutationTestFixture.make()
+        let captured = try Self.capturedWindow(fixture)
+        fixture.windows.defaultInventorySequence = [.complete([Self.onAnotherSpace(captured)])]
+
+        let response = try await fixture.context.execute(
+            tool: TypeTool(context: fixture.context),
+            arguments: ToolArguments(raw: ["snapshot": fixture.snapshotID, "text": "52514"]))
+
+        #expect(!Self.text(response).contains("moved or resized"), "\(Self.text(response))")
+        #expect(!Self.text(response).contains("do not identify the same exact process/window receipt"),
+                "\(Self.text(response))")
+    }
+
+    @Test
+    func `the window authorized on another Space keeps the snapshot editor at its place in the window`() async throws {
+        let fixture = try await MCPSnapshotMutationTestFixture.make()
+        let captured = try Self.capturedWindow(fixture)
+        let moved = Self.onAnotherSpace(captured)
+        fixture.windows.defaultInventorySequence = [.complete([moved])]
+        let mirrored = try #require(await fixture.context.uiSnapshots.getSnapshot(id: fixture.snapshotID))
+        let detection = try #require(try await fixture.snapshots.getDetectionResult(snapshotId: fixture.snapshotID))
+
+        let plan = try await fixture.context.backgroundSnapshotTargetPlan(
+            toolName: "press",
+            snapshotID: fixture.snapshotID,
+            mirroredSnapshot: mirrored,
+            detectionResult: detection,
+            acceptsWindowSpaceShift: true)
+
+        let window = try #require(plan.targetIdentity.exactWindow)
+        #expect(window.bounds == moved.bounds)
+        #expect(window.focusedElement?.frame == CGRect(x: 120 - 1574, y: 80, width: 180, height: 30))
+    }
+
     // MARK: - Helpers
+
+    /// How macOS lists a window on a Space that is not visible: shifted sideways by a display width plus a gap,
+    /// same size, not on screen.
+    private static func onAnotherSpace(_ captured: ServiceWindowInfo) -> ServiceWindowInfo {
+        AutomationTestFixtures.window(
+            copying: captured,
+            bounds: captured.bounds.offsetBy(dx: -1574, dy: 0),
+            isOnScreen: false)
+    }
 
     private static func capturedWindow(_ fixture: MCPSnapshotMutationTestFixture) throws -> ServiceWindowInfo {
         try #require(fixture.windows.windowsByIdentifier.values.lazy.flatMap(\.self).first { $0.windowID == 42 })

@@ -454,6 +454,44 @@ public enum SystemIdentityResolver {
         return current.ownerProcessIdentifier == expected.ownerProcessIdentifier && current.bounds == expectedBounds
     }
 
+    /// Same as `validateWindowMutationIdentity(_:expectedBounds:)`, but also accepts the receipted window when
+    /// macOS lists it shifted to a Space that is not visible (`DesktopTargetPlanning.WindowSpaceShift`). Only for
+    /// actions that do not depend on where the window is.
+    public static func validateWindowMutationIdentityAllowingSpaceShift(
+        _ expected: WindowMutationIdentity,
+        expectedBounds: CGRect) -> Bool
+    {
+        guard expected.capturedBounds == nil || expected.capturedBounds == expectedBounds else {
+            return false
+        }
+        return self.validateWindowMutationIdentityAllowingSpaceShift(
+            expected,
+            expectedBounds: expectedBounds,
+            processStartIdentityProvider: self.processStartIdentity,
+            windowIdentityProvider: self.windowIdentity)
+    }
+
+    static func validateWindowMutationIdentityAllowingSpaceShift(
+        _ expected: WindowMutationIdentity,
+        expectedBounds: CGRect,
+        processStartIdentityProvider: (pid_t) -> UInt64?,
+        windowIdentityProvider: (CGWindowID) -> SystemWindowIdentity?) -> Bool
+    {
+        guard expected.windowID > 0,
+              expected.ownerProcessIdentifier > 0,
+              let windowID = CGWindowID(exactly: expected.windowID),
+              processStartIdentityProvider(expected.ownerProcessIdentifier) == expected.ownerProcessStartIdentity,
+              let current = windowIdentityProvider(windowID),
+              current.ownerProcessIdentifier == expected.ownerProcessIdentifier
+        else {
+            return false
+        }
+        return current.bounds == expectedBounds || DesktopTargetPlanning.WindowSpaceShift.isSpaceShift(
+            captured: expectedBounds,
+            live: current.bounds,
+            liveIsOnScreen: current.isOnScreen)
+    }
+
     /// Repins a completed geometry mutation only when the requested final bounds belong to the
     /// original owner process generation. Callers intentionally discard the old bounds receipt.
     public static func repinWindowMutationIdentity(

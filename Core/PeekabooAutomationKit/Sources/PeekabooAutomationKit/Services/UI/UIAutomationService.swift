@@ -103,6 +103,9 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
         -> Result<ExactWindowFocusSnapshot, FocusedElementReceiptError>
     let exactKeyWindowReader: @Sendable (pid_t) -> ExactKeyWindowSnapshot?
     let exactWindowIdentityValidator: @Sendable (WindowMutationIdentity, CGRect) -> Bool
+    /// Accepts the receipted window either where it was captured or shifted to a Space that is not visible.
+    /// Only Accessibility element actions use it: they do not depend on where the window is.
+    let spaceShiftedWindowIdentityValidator: @Sendable (WindowMutationIdentity, CGRect) -> Bool
     let processStartIdentityProvider: @Sendable (pid_t) -> UInt64?
     let operationLaneCoordinator: DesktopOperationLaneCoordinator
     let desktopOperationExecutor: DesktopOperationExecutor
@@ -196,6 +199,8 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
             DetachedExactWindowFocusReader.readKeyWindow,
         exactWindowIdentityValidator: @escaping @Sendable (WindowMutationIdentity, CGRect) -> Bool =
             SystemIdentityResolver.validateWindowMutationIdentity,
+        spaceShiftedWindowIdentityValidator: @escaping @Sendable (WindowMutationIdentity, CGRect) -> Bool =
+            SystemIdentityResolver.validateWindowMutationIdentityAllowingSpaceShift,
         processStartIdentityProvider: @escaping @Sendable (pid_t) -> UInt64? =
             SystemIdentityResolver.processStartIdentity,
         operationLaneCoordinator: DesktopOperationLaneCoordinator = .shared,
@@ -223,6 +228,7 @@ public final class UIAutomationService: TargetedHotkeyServiceProtocol, TargetedT
         self.exactFocusedElementValueReader = exactFocusedElementValueReader
         self.exactKeyWindowReader = exactKeyWindowReader
         self.exactWindowIdentityValidator = exactWindowIdentityValidator
+        self.spaceShiftedWindowIdentityValidator = spaceShiftedWindowIdentityValidator
         self.processStartIdentityProvider = processStartIdentityProvider
         self.operationLaneCoordinator = operationLaneCoordinator
         let executor = desktopOperationExecutor ?? DesktopOperationExecutor(laneCoordinator: operationLaneCoordinator)

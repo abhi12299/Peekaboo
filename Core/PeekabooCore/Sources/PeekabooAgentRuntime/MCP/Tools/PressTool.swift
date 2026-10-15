@@ -483,7 +483,8 @@ public struct PressTool: MCPTool, MCPWindowObservingTool {
             return PressDeliveryPlan(target: .foreground, focusResult: focusResult)
         }
 
-        let snapshotExactWindow = try await self.snapshotExactWindow(id: snapshotID)
+        let snapshotExactWindow = try await AuthorizedDesktopTargetPlan.keyboardWindow(
+            forSnapshotWindow: self.snapshotExactWindow(id: snapshotID))
         let plannedTarget: UIAutomationTarget
         do {
             plannedTarget = try await target.requireBackgroundKeyboardTarget(

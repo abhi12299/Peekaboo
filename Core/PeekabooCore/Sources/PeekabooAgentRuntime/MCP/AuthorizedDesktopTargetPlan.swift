@@ -52,6 +52,23 @@ struct AuthorizedDesktopTargetPlan: Sendable, Equatable {
         return selectedWindow
     }
 
+    /// The window a snapshot keyboard leaf (press, type) should target. The background gate re-reads the
+    /// snapshot's window just before dispatch and may authorize it where it is now: a window that only moved to
+    /// another Space keeps its ID, owner process generation and size. Keyboard input does not use window
+    /// coordinates, so it follows that authorized frame instead of the captured one. When the gate authorized the
+    /// captured frame, the snapshot window is returned unchanged.
+    static func keyboardWindow(
+        forSnapshotWindow snapshotWindow: UIAutomationTarget.ExactWindow?) -> UIAutomationTarget.ExactWindow?
+    {
+        guard let snapshotWindow,
+              let authorized = self.current?.targetIdentity.exactWindow,
+              authorized.identity.windowID == snapshotWindow.identity.windowID,
+              authorized.identity.processIdentity == snapshotWindow.identity.processIdentity,
+              authorized.bounds != snapshotWindow.bounds
+        else { return snapshotWindow }
+        return authorized
+    }
+
     func coalescing(
         _ candidate: DesktopTargetIdentity,
         operation: String) throws -> DesktopTargetIdentity

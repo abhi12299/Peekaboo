@@ -1001,7 +1001,8 @@ extension MCPToolContext {
                 toolName: toolName,
                 snapshotID: effectiveSnapshotID,
                 mirroredSnapshot: mirroredSnapshot,
-                detectionResult: detectionResult)
+                detectionResult: detectionResult,
+                acceptsWindowSpaceShift: Self.acceptsWindowSpaceShift(toolName: toolName, arguments: arguments))
         } catch is CancellationError {
             throw CancellationError()
         } catch let changed as SnapshotWindowFrameChanged {

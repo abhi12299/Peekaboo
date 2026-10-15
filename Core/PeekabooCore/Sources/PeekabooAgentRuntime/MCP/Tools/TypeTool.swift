@@ -884,7 +884,8 @@ extension TypeTool {
         guard !request.foreground else { return nil }
 
         let snapshotProcessIdentity = try await self.snapshotProcessIdentity(snapshot)
-        let snapshotExactWindow = try self.snapshotExactWindow(snapshot)
+        let snapshotExactWindow = try AuthorizedDesktopTargetPlan.keyboardWindow(
+            forSnapshotWindow: self.snapshotExactWindow(snapshot))
         if request.target.hasTarget, snapshot != nil, snapshotProcessIdentity == nil {
             throw TypeToolValidationError(
                 "The selected snapshot has no capture-time process-generation receipt. Capture fresh UI state.",
