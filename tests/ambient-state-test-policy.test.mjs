@@ -32,6 +32,7 @@ test("hosted dialog metadata proof runs owner and output contracts without live 
   const suites = [
     "DialogMetadataReaderTests", "DialogMetadataContractTests", "DialogHierarchyReaderTests",
     "DialogHierarchyAttributeTests", "DialogOperationDeadlineTests", "ElementDetectionDetachedRunnerTests",
+    "DetachedAXObservationWorkerTests", "AXDescriptorReaderPolicyTests",
   ];
   assert.match(step, /working-directory: Core\/PeekabooAutomationKit/);
   assert.match(step, /PEEKABOO_INCLUDE_AUTOMATION_TESTS: "false"/);
@@ -48,6 +49,9 @@ test("hosted dialog metadata proof runs owner and output contracts without live 
   assert.match(step, /set -o pipefail/);
   assert.ok(step.includes(`grep -Fq "Test Suite 'DialogMetadataReaderTests' passed" "$test_log"`));
   assert.ok(step.includes(`grep -Fq 'Suite DialogMetadataContractTests passed after ' "$test_log"`));
+  for (const suite of ["DetachedAXObservationWorkerTests", "AXDescriptorReaderPolicyTests"]) {
+    assert.ok(step.includes(`grep -Fq 'Suite ${suite} passed after ' "$test_log"`));
+  }
   assert.ok(step.includes("grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after '"));
 });
 
@@ -541,7 +545,7 @@ test("hosted mocked interaction CI enables only its exact injected-service suite
   for (const name of ["RUN_AUTOMATION_TESTS", "RUN_AUTOMATION_ACTIONS", "RUN_LOCAL_TESTS"]) {
     assert.ok(step.includes(`${name}: "false"`));
   }
-  const suites = ["PressCommandTests", "ClickCommandTests", "ClickCommandActionResultTests", "ClickSnapshotWindowSelectionTests", "SelectTextCommandTests"];
+  const suites = ["PressCommandTests", "ClickCommandTests", "ClickCommandActionResultTests", "ClickSnapshotWindowSelectionTests", "SelectTextCommandTests", "DialogCommandTests"];
   const filter = `^CLIAutomationTests[.](${suites.join("|")})/`;
   assert.ok(step.includes(`--filter '${filter}'`));
   assert.equal(step.match(/--filter/g)?.length, 2);
@@ -552,6 +556,7 @@ test("hosted mocked interaction CI enables only its exact injected-service suite
     assert.ok(step.includes(`Suite ${suite} passed after `));
   }
   assert.ok(!selection.test("CLIAutomationTests.AppCommandTests/Fixture"));
+  assert.ok(!selection.test("CLIAutomationTests.DialogCommandIntegrationTests/Fixture"));
   assert.ok(!selection.test("OtherTests.ClickCommandTests/Fixture"));
   assert.ok(step.includes("--disable-xctest --enable-swift-testing --no-parallel"));
   assert.ok(step.includes("grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after '"));
@@ -566,6 +571,15 @@ test("hosted mocked interaction CI enables only its exact injected-service suite
   assert.match(selectionSource, /SelectionAutomation: StubAutomationService/);
   assert.match(selectionSource, /TestServicesFactory\.makePeekabooServices\(snapshots: snapshots, automation: automation\)/);
   assert.doesNotMatch(selectionSource, /executePeekabooCLI|NSWorkspace|NSApplication|BackgroundInputDriver|AXUIElement|NSPasteboard/);
+  // The same file hosts the real-desktop DialogCommandIntegrationTests, which stays behind RUN_AUTOMATION_ACTIONS.
+  const dialogSections = readFileSync(`${repositoryRoot}/Apps/CLI/Tests/CLIAutomationTests/DialogCommandTests.swift`, "utf8")
+    .split("\nstruct DialogCommandIntegrationTests {");
+  assert.equal(dialogSections.length, 2, "Keep the stub dialog suite ahead of its real-desktop integration suite");
+  const [dialogSource] = dialogSections;
+  assert.match(dialogSource, /StubDialogService\(/);
+  assert.match(dialogSource, /TestServicesFactory\.makePeekabooServices\(/);
+  assert.doesNotMatch(dialogSource, /executePeekabooCLI|runShared|NSWorkspace|NSApplication|NSPasteboard|AXUIElement|CGEvent/);
+  assert.match(dialogSource, /\.enabled\(if: CLITestEnvironment\.runAutomationActions\)\n\)$/);
 });
 
 test("hosted coordinate scroll CLI proof enters skip-automation mode without ambient input opt-ins", () => {

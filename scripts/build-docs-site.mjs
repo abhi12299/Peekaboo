@@ -268,7 +268,7 @@ function markdownToHtml(markdown, currentRel, nested = false) {
   const lines = markdown.replace(/\r\n/g, "\n").split("\n");
   const html = [];
   let paragraph = [];
-  let list = null;
+  const lists = []; // open lists, outermost first: { tag, indent, itemOpen, itemAt, itemText }
   let fence = null;
   let blockquote = [];
 
@@ -277,10 +277,29 @@ function markdownToHtml(markdown, currentRel, nested = false) {
     html.push(`<p>${inline(paragraph.join(" "), currentRel)}</p>`);
     paragraph = [];
   };
+  const openListItem = (itemText) => {
+    const task = itemText.match(/^\[([ xX])\]\s+([\s\S]*)$/);
+    if (!task) return `<li>${inline(itemText, currentRel)}`;
+    const checked = task[1].toLowerCase() === "x" ? " checked" : "";
+    return `<li class="task"><input type="checkbox" disabled${checked}> ${inline(task[2], currentRel)}`;
+  };
+  // an item with no nested content closes on its own line: <li>text</li>
+  const closeItem = (list) => {
+    if (html.length - 1 === list.itemAt) html[list.itemAt] += "</li>";
+    else html.push("</li>");
+  };
+  const closeInnermostList = () => {
+    const list = lists.pop();
+    if (list.itemOpen) closeItem(list);
+    html.push(`</${list.tag}>`);
+  };
   const closeList = () => {
-    if (!list) return;
-    html.push(`</${list}>`);
-    list = null;
+    while (lists.length) closeInnermostList();
+  };
+  const nextNonBlank = (from) => {
+    let at = from;
+    while (at < lines.length && !lines[at].trim()) at += 1;
+    return lines[at];
   };
   const flushBlockquote = () => {
     if (!blockquote.length) return;
@@ -329,23 +348,29 @@ function markdownToHtml(markdown, currentRel, nested = false) {
 
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
-    const fenceMatch = line.match(/^\s{0,3}(`{3,}|~{3,})(.*)$/);
+    const fenceMatch = line.match(/^(\s{0,3})(`{3,}|~{3,})(.*)$/);
     if (fence) {
-      if (fenceMatch && fenceMatch[1][0] === fence.marker[0] &&
-          fenceMatch[1].length >= fence.marker.length && !fenceMatch[2].trim()) {
+      if (fenceMatch && fenceMatch[2][0] === fence.marker[0] &&
+          fenceMatch[2].length >= fence.marker.length && !fenceMatch[3].trim()) {
         const body = highlightCode(fence.lines.join("\n"), fence.lang);
         html.push(`<pre><code class="language-${escapeAttr(fence.lang)}">${body}</code></pre>`);
         fence = null;
       } else {
-        fence.lines.push(line);
+        // an indented fence strips up to its own indentation from the content lines
+        fence.lines.push(line.replace(new RegExp(`^ {0,${fence.indent}}`), ""));
       }
       continue;
     }
-    if (fenceMatch && !(fenceMatch[1][0] === "`" && fenceMatch[2].includes("`"))) {
+    if (fenceMatch && !(fenceMatch[2][0] === "`" && fenceMatch[3].includes("`"))) {
       flushParagraph();
       closeList();
       flushBlockquote();
-      fence = { marker: fenceMatch[1], lang: fenceMatch[2].trim().split(/\s+/)[0] || "text", lines: [] };
+      fence = {
+        marker: fenceMatch[2],
+        indent: fenceMatch[1].length,
+        lang: fenceMatch[3].trim().split(/\s+/)[0] || "text",
+        lines: [],
+      };
       continue;
     }
     if (/^>\s?/.test(line)) {
@@ -357,7 +382,9 @@ function markdownToHtml(markdown, currentRel, nested = false) {
     flushBlockquote();
     if (!line.trim()) {
       flushParagraph();
-      closeList();
+      // a blank line inside a list (between items, or before an indented continuation) keeps it open
+      const following = nextNonBlank(i + 1);
+      if (!/^\s*(-|\d+\.)\s+\S/.test(following ?? "") && !/^ {2,}\S/.test(following ?? "")) closeList();
       continue;
     }
     if (/^\s*---+\s*$/.test(line)) {
@@ -420,13 +447,35 @@ function markdownToHtml(markdown, currentRel, nested = false) {
     if (bullet || numbered) {
       flushParagraph();
       const tag = bullet ? "ul" : "ol";
-      if (list && list !== tag) closeList();
-      if (!list) {
-        list = tag;
+      const indent = line.match(/^\s*/)[0].replaceAll("\t", "    ").length;
+      while (lists.length && indent < lists.at(-1).indent) closeInnermostList();
+      const current = lists.at(-1);
+      if (current && indent === current.indent && current.tag !== tag) closeInnermostList();
+      const sibling = lists.at(-1);
+      if (sibling && indent === sibling.indent) {
+        if (sibling.itemOpen) closeItem(sibling);
+      } else {
+        // a deeper marker opens a nested list inside the still-open parent item
         const start = numbered && numbered[1] !== "1" ? ` start="${numbered[1]}"` : "";
         html.push(`<${tag}${start}>`);
+        lists.push({ tag, indent, itemOpen: false, itemAt: -1, itemText: "" });
       }
-      html.push(`<li>${inline(bullet ? bullet[1] : numbered[2], currentRel)}</li>`);
+      const itemText = bullet ? bullet[1] : numbered[2];
+      html.push(openListItem(itemText));
+      Object.assign(lists.at(-1), { itemOpen: true, itemAt: html.length - 1, itemText });
+      continue;
+    }
+    // After a blank line, a paragraph at the parent's content indentation
+    // leaves nested children. Without a blank, preserve lazy continuation.
+    const continuationIndent = line.match(/^\s*/)[0].replaceAll("\t", "    ").length;
+    if (i > 0 && !lines[i - 1].trim()) {
+      while (lists.length > 1 && continuationIndent <= lists.at(-1).indent) closeInnermostList();
+    }
+    const owner = lists.at(-1);
+    if (owner?.itemOpen && !paragraph.length && html.length - 1 === owner.itemAt) {
+      // the next line of an item's own text, not a new paragraph
+      owner.itemText += ` ${line.trim()}`;
+      html[owner.itemAt] = openListItem(owner.itemText);
       continue;
     }
     paragraph.push(line.trim());
@@ -471,7 +520,18 @@ function inline(text, currentRel, inheritedStash = []) {
     stash.push({ html: `<code>${escapeHtml(code)}</code>`, raw });
     return `\u0000${stash.length - 1}\u0000`;
   });
-  out = out.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (raw, label, href) => {
+  out = out.replace(/!\[([^\]]*)\]\(((?:[^()]|\([^()]*\))+)\)/g, (raw, alt, href) => {
+    const altText = alt.replace(/\u0000(\d+)\u0000/g, (_, i) => stash[Number(i)].raw);
+    const destination = imageSource(href
+      .replace(/\u0000(\d+)\u0000/g, (_, i) => stash[Number(i)].raw)
+      .replace(/\\\|/g, "|"));
+    stash.push({
+      html: `<img src="${escapeAttr(destination)}" alt="${escapeAttr(altText)}">`,
+      raw,
+    });
+    return `\u0000${stash.length - 1}\u0000`;
+  });
+  out = out.replace(/\[([^\]]+)\]\(((?:[^()]|\([^()]*\))+)\)/g, (raw, label, href) => {
     const destination = href
       .replace(/\u0000(\d+)\u0000/g, (_, i) => stash[Number(i)].raw)
       .replace(/\\\|/g, "|");
@@ -488,10 +548,17 @@ function inline(text, currentRel, inheritedStash = []) {
   out = escapeHtml(out)
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/(^|[^*])\*([^*\s][^*]*?)\*(?!\*)/g, "$1<em>$2</em>")
-    .replace(/(^|[^_])_([^_\s][^_]*?)_(?!_)/g, "$1<em>$2</em>");
+    // underscores inside words (WINDOW_NOT_FOUND, snake_case) are literal, not emphasis delimiters
+    .replace(/(^|[^\p{L}\p{N}_])_([^_\s](?:[^_]|(?<=[\p{L}\p{N}])_(?=[\p{L}\p{N}]))*?)_(?![\p{L}\p{N}_])/gu, "$1<em>$2</em>");
   out = out.replace(/\\\|/g, "|");
   out = out.replace(/&lt;br&gt;/g, "<br>");
   return out.replace(/\u0000(\d+)\u0000/g, (_, i) => stash[Number(i)].html);
+}
+
+function imageSource(href) {
+  const trimmed = href.trim();
+  const titled = trimmed.match(/^(\S+)\s+(?:"[^"]*"|'[^']*')$/);
+  return titled ? titled[1] : trimmed;
 }
 
 function rewriteHref(href, currentRel) {
@@ -824,32 +891,30 @@ function highlightJson(code) {
   ]);
 }
 
+function highlightClassified(code, pattern) {
+  // Earliest token wins, so a URL inside a string is not painted as a line comment
+  // and a comment that contains quotes stays one comment.
+  return renderFragments(highlightFragments([code], pattern, (match) => {
+    let cls = "hl-k";
+    if (match.startsWith("/*") || match.startsWith("//")) cls = "hl-c";
+    else if (match.startsWith("`") || match.startsWith('"') || match.startsWith("'")) cls = "hl-s";
+    else if (/^\d/.test(match)) cls = "hl-n";
+    return `<span class="${cls}">${escapeHtml(match)}</span>`;
+  }));
+}
+
 function highlightJs(code) {
-  return highlightWithPatterns(code, [
-    [/\/\/[^\n]*/g, "hl-c"],
-    [/\/\*[\s\S]*?\*\//g, "hl-c"],
-    [/`(?:\\.|[^`\\])*`/g, "hl-s"],
-    [/"(?:\\.|[^"\\])*"/g, "hl-s"],
-    [/'(?:\\.|[^'\\])*'/g, "hl-s"],
-    [
-      /\b(const|let|var|function|return|if|else|for|while|switch|case|break|continue|class|extends|new|import|from|export|default|async|await|try|catch|finally|throw|typeof|instanceof|interface|type|enum|as|of|in|null|undefined|true|false|this)\b/g,
-      "hl-k",
-    ],
-    [/\b(\d+(?:\.\d+)?)\b/g, "hl-n"],
-  ]);
+  return highlightClassified(
+    code,
+    /\/\*[\s\S]*?\*\/|(?<!:)\/\/[^\n]*|`(?:\\.|[^`\\])*`|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|\b(?:const|let|var|function|return|if|else|for|while|switch|case|break|continue|class|extends|new|import|from|export|default|async|await|try|catch|finally|throw|typeof|instanceof|interface|type|enum|as|of|in|null|undefined|true|false|this)\b|\b\d+(?:\.\d+)?\b/g,
+  );
 }
 
 function highlightSwift(code) {
-  return highlightWithPatterns(code, [
-    [/\/\/[^\n]*/g, "hl-c"],
-    [/\/\*[\s\S]*?\*\//g, "hl-c"],
-    [/"(?:\\.|[^"\\])*"/g, "hl-s"],
-    [
-      /\b(let|var|func|class|struct|enum|protocol|extension|actor|import|return|if|else|for|while|switch|case|break|continue|try|throw|throws|async|await|guard|defer|do|public|private|internal|fileprivate|open|static|final|init|deinit|nil|true|false|self|Self|some|any)\b/g,
-      "hl-k",
-    ],
-    [/\b(\d+(?:\.\d+)?)\b/g, "hl-n"],
-  ]);
+  return highlightClassified(
+    code,
+    /\/\*[\s\S]*?\*\/|(?<!:)\/\/[^\n]*|"(?:\\.|[^"\\])*"|\b(?:let|var|func|class|struct|enum|protocol|extension|actor|import|return|if|else|for|while|switch|case|break|continue|try|throw|throws|async|await|guard|defer|do|public|private|internal|fileprivate|open|static|final|init|deinit|nil|true|false|self|Self|some|any)\b|\b\d+(?:\.\d+)?\b/g,
+  );
 }
 
 function highlightYaml(code) {

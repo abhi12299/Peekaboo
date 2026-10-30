@@ -40,6 +40,10 @@ struct DaemonControlClient {
 
     func fetchStatus() async throws -> PeekabooDaemonStatus? {
         let client = PeekabooBridgeClient(socketPath: socketPath, requestTimeoutSec: self.requestTimeoutSec)
+        return try await self.fetchStatus(using: client)
+    }
+
+    func fetchStatus(using client: PeekabooBridgeClient) async throws -> PeekabooDaemonStatus? {
         let handshake: PeekabooBridgeHandshakeResponse
         do {
             handshake = try await self.handshake(client: client)
@@ -47,9 +51,13 @@ struct DaemonControlClient {
             return nil
         }
         do {
-            return try await client.daemonStatus()
+            var observed = try await client.daemonStatus()
+            observed.trustMode = handshake.trustMode
+            return observed
         } catch let envelope as PeekabooBridgeErrorEnvelope where envelope.code == .operationNotSupported {
-            return self.fallbackStatus(handshake: handshake)
+            var observed = self.fallbackStatus(handshake: handshake)
+            observed.trustMode = handshake.trustMode
+            return observed
         }
     }
 
@@ -643,6 +651,9 @@ enum DaemonStatusPrinter {
             return
         }
 
+        if let trustMode = status.trustMode {
+            print("Trust: \(trustMode.description)")
+        }
         if let mode = status.mode {
             print("Mode: \(mode.rawValue)")
         }

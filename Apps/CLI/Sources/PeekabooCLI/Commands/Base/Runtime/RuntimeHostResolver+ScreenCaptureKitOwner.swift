@@ -99,6 +99,10 @@ extension RuntimeHostResolver {
         PeekabooBridgeClientIdentity
     ) async throws -> PeekabooBridgeHandshakeResponse
     typealias RemoteHandshakeCacheFactory = @MainActor () -> RemoteHandshakeCache
+    typealias CallerPermissionPreflight = @MainActor () -> PermissionsStatus?
+    typealias OnDemandDaemonStarter = @MainActor (String, [String: String]) async throws -> String?
+    typealias DaemonStatusFetcher = @MainActor (String) async throws -> PeekabooDaemonStatus?
+    typealias ReleaseSigningCheck = @MainActor () -> Bool
 
     struct Dependencies {
         let makeLocalServices: LocalServiceFactory
@@ -110,6 +114,10 @@ extension RuntimeHostResolver {
         let snapshotAffinityProbe: SnapshotAffinityProbe
         let makeRemoteHandshakeCache: RemoteHandshakeCacheFactory
         let makeRemoteServices: RemoteServiceFactory
+        let callerPermissionPreflight: CallerPermissionPreflight
+        let startOnDemandDaemon: OnDemandDaemonStarter
+        let fetchDaemonStatus: DaemonStatusFetcher
+        let currentProcessIsReleaseSigned: ReleaseSigningCheck
 
         init(
             makeLocalServices: @escaping LocalServiceFactory,
@@ -122,6 +130,18 @@ extension RuntimeHostResolver {
             makeRemoteHandshakeCache: @escaping RemoteHandshakeCacheFactory = { RemoteHandshakeCache() },
             makeRemoteServices: @escaping RemoteServiceFactory = {
                 RuntimeHostResolver.remoteServices(client: $0, handshake: $1, options: $2)
+            },
+            callerPermissionPreflight: @escaping CallerPermissionPreflight = {
+                PermissionsService().checkAllPermissions()
+            },
+            startOnDemandDaemon: @escaping OnDemandDaemonStarter = {
+                try await DaemonLaunchPolicy.startOnDemandDaemon(socketPath: $0, environment: $1)
+            },
+            fetchDaemonStatus: @escaping DaemonStatusFetcher = {
+                try await DaemonControlClient(socketPath: $0).fetchStatus()
+            },
+            currentProcessIsReleaseSigned: @escaping ReleaseSigningCheck = {
+                PeekabooBridgeSigningDiagnostics.currentProcessIsReleaseSigned()
             }
         ) {
             self.makeLocalServices = makeLocalServices
@@ -133,6 +153,41 @@ extension RuntimeHostResolver {
             self.snapshotAffinityProbe = snapshotAffinityProbe
             self.makeRemoteHandshakeCache = makeRemoteHandshakeCache
             self.makeRemoteServices = makeRemoteServices
+            self.callerPermissionPreflight = callerPermissionPreflight
+            self.startOnDemandDaemon = startOnDemandDaemon
+            self.fetchDaemonStatus = fetchDaemonStatus
+            self.currentProcessIsReleaseSigned = currentProcessIsReleaseSigned
+        }
+
+        func resolutionContext(
+            options: CommandRuntimeOptions,
+            environment: [String: String],
+            candidatePlan: RemoteCandidatePlan,
+            handshakeCache: RemoteHandshakeCache,
+            preferredScreenCaptureKitOwner: ScreenCaptureKitOwnerLease.OwnerReceipt? = nil
+        ) -> RemoteResolutionContext {
+            RemoteResolutionContext(
+                options: options,
+                environment: environment,
+                candidatePlan: candidatePlan,
+                identity: handshakeCache.identity,
+                handshakeCache: handshakeCache,
+                snapshotInvalidationRemoteSocketPaths: RuntimeHostResolver.snapshotInvalidationRemoteSocketPaths(
+                    explicitSocket: candidatePlan.explicitSocket,
+                    daemonSocketPath: candidatePlan.daemonSocketPath,
+                    buildScopedDaemonSocketPath: candidatePlan.buildScopedDaemonSocketPath,
+                    historicalBuildScopedDaemonSocketPaths: candidatePlan.historicalBuildScopedDaemonSocketPaths
+                ),
+                preferredScreenCaptureKitOwner: preferredScreenCaptureKitOwner,
+                makeLocalServices: self.makeLocalServices,
+                inspectScreenCaptureKitSafety: self.inspectScreenCaptureKitSafety,
+                recordScreenCaptureKitSafetyBlocker: self.recordScreenCaptureKitSafetyBlocker,
+                makeRemoteServices: self.makeRemoteServices,
+                callerPermissionPreflight: self.callerPermissionPreflight,
+                startOnDemandDaemon: self.startOnDemandDaemon,
+                fetchDaemonStatus: self.fetchDaemonStatus,
+                currentProcessIsReleaseSigned: self.currentProcessIsReleaseSigned
+            )
         }
 
         static let live = Dependencies(
@@ -185,6 +240,19 @@ extension RuntimeHostResolver {
             RuntimeHostResolver.remoteServices(client: $0, handshake: $1, options: $2)
         }
 
+        var callerPermissionPreflight: CallerPermissionPreflight = { PermissionsService().checkAllPermissions() }
+        var startOnDemandDaemon: OnDemandDaemonStarter = {
+            try await DaemonLaunchPolicy.startOnDemandDaemon(socketPath: $0, environment: $1)
+        }
+
+        var fetchDaemonStatus: DaemonStatusFetcher = {
+            try await DaemonControlClient(socketPath: $0).fetchStatus()
+        }
+
+        var currentProcessIsReleaseSigned: ReleaseSigningCheck = {
+            PeekabooBridgeSigningDiagnostics.currentProcessIsReleaseSigned()
+        }
+
         func resolveRemoteServices(
             candidates: [ImplicitRemoteCandidate],
             requiredProtocolVersion: PeekabooBridgeProtocolVersion? = nil,
@@ -202,6 +270,12 @@ extension RuntimeHostResolver {
                 permissionRejections: &permissionRejections,
                 makeRemoteServices: self.makeRemoteServices,
                 handshakeCache: self.handshakeCache,
+                guiPermissionCandidate: self.candidatePlan.explicitSocket == nil &&
+                    self.options.explicitSnapshotID == nil && requiredOwner == nil
+                    ? self.candidatePlan.candidates.first { $0.requiredHostKind == .gui } : nil,
+                reportUntrustedHosts: !self.currentProcessIsReleaseSigned(),
+                preserveHostAuthenticationFailure: self.candidatePlan.explicitSocket != nil &&
+                    !self.currentProcessIsReleaseSigned(),
                 recordRejection: recordRejection
             )
         }
@@ -512,6 +586,29 @@ extension RuntimeHostResolver {
         return MCPToolCapturePreflightRefusal(
             message: refusal.localizedDescription,
             hint: [refusal.hint, sessionGuidance].compactMap(\.self).joined(separator: " ")
+        )
+    }
+
+    /// Persistent MCP and Agent runtimes keep noncapture tools usable when a live
+    /// ScreenCaptureKit owner has no reachable Bridge. The immutable refusal is applied to
+    /// capture-capable tools instead of failing the whole server before the JSON-RPC handshake.
+    static func deferredPersistentOwnerCaptureRefusal(
+        owner: ScreenCaptureKitOwnerLease.OwnerReceipt,
+        requiredSocket: String?,
+        explicitSocket: String?,
+        options: CommandRuntimeOptions
+    ) -> MCPToolCapturePreflightRefusal? {
+        guard options.usesPersistentDynamicCaptureRuntime, explicitSocket == nil else { return nil }
+        let refusal = if let requiredSocket {
+            self.ownerExactBuildConflict(owner: owner, requiredSocket: requiredSocket)
+        } else {
+            self.ownerRefusal(owner: owner, callerLocal: false)
+        }
+        return MCPToolCapturePreflightRefusal(
+            message: refusal.localizedDescription,
+            hint: "Noncapture tools remain available. This capture refusal is fixed for the lifetime of this " +
+                "MCP or Agent session. Release the conflicting owner and restart this MCP or Agent session, " +
+                "or use classic capture where the selected host proves the ScreenCaptureKit-free path."
         )
     }
 

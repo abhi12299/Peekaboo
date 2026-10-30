@@ -188,6 +188,28 @@ public final class PeekabooAIService {
         self.defaultVisionModel
     }
 
+    /// Nil-model image analysis choice. Throws the same way `resolveVisionModel(nil)` does.
+    func resolvedAnalysisVisionModel() throws -> LanguageModel {
+        let configured = self.configuration.configuration?.agent?.visionModel?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !configured.isEmpty {
+            // The supportsVision flag is false for whole providers the menu can save.
+            // Use the saved model. A provider that rejects the image surfaces that error later.
+            guard let parsed = self.resolveConfiguredModel(configured) else {
+                throw TachikomaError.unsupportedOperation(
+                    "Saved vision model \(configured) could not be resolved. "
+                        + "Choose a valid model in Settings → Agent → Vision model, "
+                        + "or choose Same as agent model to restore the default.")
+            }
+            return parsed
+        }
+
+        guard let defaultVisionModel else {
+            throw TachikomaError.unsupportedOperation("No configured vision-capable AI model is available")
+        }
+        return defaultVisionModel
+    }
+
     public init(configuration: ConfigurationManager = .shared) {
         self.configuration = configuration
         ConfigurationManager.configureTachikomaProfileDirectory()
@@ -342,10 +364,7 @@ public final class PeekabooAIService {
             return model
         }
 
-        guard let defaultVisionModel else {
-            throw TachikomaError.unsupportedOperation("No configured vision-capable AI model is available")
-        }
-        return defaultVisionModel
+        return try self.resolvedAnalysisVisionModel()
     }
 
     private static func parseProviderEntry(_ entry: String, configuration: ConfigurationManager) -> LanguageModel? {

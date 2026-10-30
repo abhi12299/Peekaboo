@@ -64,7 +64,6 @@ enum RuntimeHostResolver {
             }
         }
 
-        let concreteSnapshotID = options.explicitSnapshotID
         guard self.shouldResolveKnownRemoteEndpoints(
             options: options,
             environment: environment,
@@ -94,20 +93,13 @@ enum RuntimeHostResolver {
             historicalBuildScopedDaemonSocketPaths: historicalBuildScopedDaemonSocketPaths
         )
 
-        if let concreteSnapshotID {
+        if let concreteSnapshotID = options.explicitSnapshotID {
             let resolvedHandshakeCache = handshakeCache ?? dependencies.makeRemoteHandshakeCache()
-            let context = RemoteResolutionContext(
+            let context = dependencies.resolutionContext(
                 options: options,
                 environment: environment,
                 candidatePlan: candidatePlan,
-                identity: resolvedHandshakeCache.identity,
-                handshakeCache: resolvedHandshakeCache,
-                snapshotInvalidationRemoteSocketPaths: snapshotInvalidationRemoteSocketPaths,
-                preferredScreenCaptureKitOwner: nil,
-                makeLocalServices: dependencies.makeLocalServices,
-                inspectScreenCaptureKitSafety: dependencies.inspectScreenCaptureKitSafety,
-                recordScreenCaptureKitSafetyBlocker: dependencies.recordScreenCaptureKitSafetyBlocker,
-                makeRemoteServices: dependencies.makeRemoteServices
+                handshakeCache: resolvedHandshakeCache
             )
             var permissionRejections: [String] = []
             var resolution = try await self.resolveSnapshotAffinityServices(
@@ -168,21 +160,16 @@ enum RuntimeHostResolver {
         }
 
         let resolvedHandshakeCache = handshakeCache ?? dependencies.makeRemoteHandshakeCache()
-        var resolution = try await self.resolveRemoteRouting(context: RemoteResolutionContext(
+        var resolution = try await self.resolveRemoteRouting(context: dependencies.resolutionContext(
             options: options,
             environment: environment,
             candidatePlan: candidatePlan,
-            identity: resolvedHandshakeCache.identity,
             handshakeCache: resolvedHandshakeCache,
-            snapshotInvalidationRemoteSocketPaths: snapshotInvalidationRemoteSocketPaths,
-            preferredScreenCaptureKitOwner: preferredScreenCaptureKitOwner,
-            makeLocalServices: dependencies.makeLocalServices,
-            inspectScreenCaptureKitSafety: dependencies.inspectScreenCaptureKitSafety,
-            recordScreenCaptureKitSafetyBlocker: dependencies.recordScreenCaptureKitSafetyBlocker,
-            makeRemoteServices: dependencies.makeRemoteServices
+            preferredScreenCaptureKitOwner: preferredScreenCaptureKitOwner
         ))
         resolution.captureEngineSafetyOverride = captureSafety.engineOverride ?? resolution.captureEngineSafetyOverride
-        resolution.toolCapturePreflightRefusal = captureSafety.toolPreflightRefusal
+        resolution.toolCapturePreflightRefusal = captureSafety.toolPreflightRefusal ??
+            resolution.toolCapturePreflightRefusal
         return resolution
     }
 
@@ -304,18 +291,51 @@ enum RuntimeHostResolver {
         }
     }
 
+    private static func resolveExactBuildRemoteServices(
+        context: RemoteResolutionContext,
+        autoStartAllowed: Bool,
+        releaseSigned: Bool,
+        permissionRejections: inout [String],
+        recordRejection: (RemoteCandidateEvaluation) -> Void
+    ) async throws -> Resolution? {
+        guard let buildScopedDaemonSocketPath = context.candidatePlan.buildScopedDaemonSocketPath else { return nil }
+        let exactCandidate = ImplicitRemoteCandidate(
+            socketPath: buildScopedDaemonSocketPath,
+            requireReusableDaemon: true,
+            requiredHostKind: .onDemand,
+            requiresValidatedHistoricalDaemon: false
+        )
+        if let resolved = try await context.resolveRemoteServices(
+            candidates: [exactCandidate],
+            requiredProtocolVersion: PeekabooBridgeConstants.protocolVersion,
+            permissionRejections: &permissionRejections,
+            recordRejection: recordRejection
+        ) {
+            return resolved
+        }
+
+        return try await self.resolveNewImplicitDaemon(
+            context: context,
+            exactBuildSocketPath: buildScopedDaemonSocketPath,
+            autoStartAllowed: autoStartAllowed,
+            releaseSigned: releaseSigned,
+            rejections: &permissionRejections,
+            recordRejection: recordRejection
+        )
+    }
+
     private static func resolveRemoteRouting(
         context: RemoteResolutionContext
     ) async throws -> Resolution {
         let options = context.options
         let candidatePlan = context.candidatePlan
         let explicitSocket = candidatePlan.explicitSocket
-        let daemonSocketPath = candidatePlan.daemonSocketPath
         let buildScopedDaemonSocketPath = candidatePlan.buildScopedDaemonSocketPath
 
         // Stateful implicit commands share in-memory snapshots across invocations. Establish
         // the exact daemon generation for this executable before considering compatible older
-        // hosts; protocol equality alone cannot distinguish two builds that both speak 1.11.
+        // hosts; protocol equality alone cannot distinguish builds with different state semantics.
+        // GUI fallback still catches up and invalidates snapshots through the normal mutation barrier.
         let prefersExactBuildScopedHost = self.prefersExactBuildScopedHost(
             options: options,
             explicitSocket: explicitSocket,
@@ -323,6 +343,16 @@ enum RuntimeHostResolver {
         )
         var permissionRejections: [String] = []
         var candidateRejections: [RemoteCandidateEvaluation] = []
+        let releaseSigned = context.currentProcessIsReleaseSigned()
+        let autoStartRequested = DaemonLaunchPolicy.shouldAutoStartDaemon(
+            options: options, environment: context.environment
+        )
+        let autoStartAllowed = autoStartRequested &&
+            (releaseSigned || context.environment["PEEKABOO_ALLOW_UNSIGNED_DAEMON"] == "1")
+        if autoStartRequested, !autoStartAllowed {
+            permissionRejections
+                .append("daemon auto-start skipped: unsigned CLI without PEEKABOO_ALLOW_UNSIGNED_DAEMON=1")
+        }
         let recordRejection: (RemoteCandidateEvaluation) -> Void = { candidateRejections.append($0) }
         let ownerAwareCandidates = explicitSocket == nil
             ? self.screenCaptureKitOwnerCandidates(from: candidatePlan.candidates)
@@ -363,6 +393,14 @@ enum RuntimeHostResolver {
                 return resolved
             }
             if prefersExactBuildScopedHost, let buildScopedDaemonSocketPath {
+                if let refusal = self.deferredPersistentOwnerCaptureRefusal(
+                    owner: preferredScreenCaptureKitOwner,
+                    requiredSocket: buildScopedDaemonSocketPath,
+                    explicitSocket: explicitSocket,
+                    options: options
+                ) {
+                    return self.deferredCaptureResolution(context: context, refusal: refusal)
+                }
                 throw self.ownerExactBuildConflict(
                     owner: preferredScreenCaptureKitOwner,
                     requiredSocket: buildScopedDaemonSocketPath
@@ -374,49 +412,29 @@ enum RuntimeHostResolver {
                     explicitSocket: explicitSocket
                 )
             }
+            if let refusal = self.deferredPersistentOwnerCaptureRefusal(
+                owner: preferredScreenCaptureKitOwner,
+                requiredSocket: nil,
+                explicitSocket: explicitSocket,
+                options: options
+            ) {
+                return self.deferredCaptureResolution(context: context, refusal: refusal)
+            }
             throw self.ownerRefusal(
                 owner: preferredScreenCaptureKitOwner,
                 callerLocal: false
             )
         }
 
-        if prefersExactBuildScopedHost, let buildScopedDaemonSocketPath {
-            let exactCandidate = ImplicitRemoteCandidate(
-                socketPath: buildScopedDaemonSocketPath,
-                requireReusableDaemon: true,
-                requiredHostKind: .onDemand,
-                requiresValidatedHistoricalDaemon: false
-            )
-            if let resolved = try await context.resolveRemoteServices(
-                candidates: [exactCandidate],
-                requiredProtocolVersion: PeekabooBridgeConstants.protocolVersion,
-                permissionRejections: &permissionRejections,
-                recordRejection: recordRejection
-            ) {
-                return resolved
-            }
-
-            let exactHostExists = try await DaemonControlClient(socketPath: buildScopedDaemonSocketPath)
-                .fetchStatus() != nil
-            if !exactHostExists,
-               DaemonLaunchPolicy.shouldAutoStartDaemon(options: options, environment: context.environment),
-               let resolvedDaemonSocket = try await DaemonLaunchPolicy.startOnDemandDaemon(
-                   socketPath: buildScopedDaemonSocketPath,
-                   environment: context.environment
-               ),
-               let resolved = try await context.resolveRemoteServices(
-                   candidates: [ImplicitRemoteCandidate(
-                       socketPath: resolvedDaemonSocket,
-                       requireReusableDaemon: true,
-                       requiredHostKind: .onDemand,
-                       requiresValidatedHistoricalDaemon: false
-                   )],
-                   requiredProtocolVersion: PeekabooBridgeConstants.protocolVersion,
-                   permissionRejections: &permissionRejections,
-                   recordRejection: recordRejection
-               ) {
-                return resolved
-            }
+        if prefersExactBuildScopedHost,
+           let resolved = try await self.resolveExactBuildRemoteServices(
+               context: context,
+               autoStartAllowed: autoStartAllowed,
+               releaseSigned: releaseSigned,
+               permissionRejections: &permissionRejections,
+               recordRejection: recordRejection
+           ) {
+            return resolved
         }
 
         if let resolved = try await context.resolveRemoteServices(
@@ -439,30 +457,14 @@ enum RuntimeHostResolver {
         }
 
         if !prefersExactBuildScopedHost,
-           DaemonLaunchPolicy.shouldAutoStartDaemon(options: options, environment: context.environment) {
-            let rejectedDefaultSocketOccupant =
-                try await DaemonControlClient(socketPath: daemonSocketPath).fetchStatus() != nil
-            let autoStartSocketPath = DaemonLaunchPolicy.autoStartSocketPath(
-                daemonSocketPath: daemonSocketPath,
-                defaultSocketWasOccupiedAndRejected: rejectedDefaultSocketOccupant,
-                runtimeBuildIdentity: candidatePlan.runtimeBuildIdentity
-            )
-            if let resolvedDaemonSocket = try await DaemonLaunchPolicy.startOnDemandDaemon(
-                socketPath: autoStartSocketPath,
-                environment: context.environment
-            ),
-                let resolved = try await context.resolveRemoteServices(
-                    candidates: [ImplicitRemoteCandidate(
-                        socketPath: resolvedDaemonSocket,
-                        requireReusableDaemon: true,
-                        requiredHostKind: nil,
-                        requiresValidatedHistoricalDaemon: false
-                    )],
-                    permissionRejections: &permissionRejections,
-                    recordRejection: recordRejection
-                ) {
-                return resolved
-            }
+           let resolved = try await self.resolveNewImplicitDaemon(
+               context: context,
+               autoStartAllowed: autoStartAllowed,
+               releaseSigned: releaseSigned,
+               rejections: &permissionRejections,
+               recordRejection: recordRejection
+           ) {
+            return resolved
         }
 
         try Task.checkCancellation()
@@ -479,8 +481,7 @@ enum RuntimeHostResolver {
         candidateRejections: [RemoteCandidateEvaluation]
     ) -> Resolution {
         let options = context.options
-        // Name the hosts skipped for missing TCC permissions so a fallback is explainable
-        // instead of silently selecting a permission-less bridge host.
+        // Keep rejected hosts and skipped startup visible when selecting local services.
         let rejectionSummary = permissionRejections.isEmpty
             ? ""
             : "; rejected " + permissionRejections.joined(separator: "; ")
@@ -496,6 +497,22 @@ enum RuntimeHostResolver {
                 options: options,
                 rejections: candidateRejections
             )
+        )
+    }
+
+    private static func deferredCaptureResolution(
+        context: RemoteResolutionContext,
+        refusal: MCPToolCapturePreflightRefusal
+    ) -> Resolution {
+        Resolution(
+            services: context.makeLocalServices(context.options),
+            hostDescription: "local (ScreenCaptureKit blocked by an unreachable owner)",
+            selectedRemoteSocketPath: nil,
+            selectedRemoteHostProcessIdentifier: nil,
+            snapshotInvalidationRemoteSocketPaths: context.snapshotInvalidationRemoteSocketPaths,
+            applicationRelaunchAllowed: !context.options.requiresApplicationRelaunch,
+            requiredHostFailure: nil,
+            toolCapturePreflightRefusal: refusal
         )
     }
 }
@@ -828,31 +845,51 @@ extension RuntimeHostResolver {
         },
         handshake: ScreenCaptureKitHandshake? = nil,
         handshakeCache: RemoteHandshakeCache? = nil,
+        guiPermissionCandidate: ImplicitRemoteCandidate? = nil,
+        reportUntrustedHosts: Bool = false,
+        preserveHostAuthenticationFailure: Bool = false,
         recordRejection: (RemoteCandidateEvaluation) -> Void = { _ in }
     )
         async throws -> Resolution? {
-        for candidate in candidates {
+        let cache = handshakeCache ?? RemoteHandshakeCache(identity: identity, handshakeProvider: handshake)
+        var pendingCandidates = candidates
+        var deferredPaths = Set<String>()
+        var candidateIndex = 0
+        while candidateIndex < pendingCandidates.count {
+            let candidate = pendingCandidates[candidateIndex]
+            candidateIndex += 1
             try Task.checkCancellation()
             let socketPath = candidate.socketPath
             do {
                 let client: PeekabooBridgeClient
                 let handshakeResponse: PeekabooBridgeHandshakeResponse
-                if let handshake {
-                    client = PeekabooBridgeClient(socketPath: socketPath)
-                    handshakeResponse = try await handshake(candidate, identity)
-                } else if let handshakeCache {
-                    let cached = try await handshakeCache.handshake(candidate, identity: identity)
-                    client = cached.client
-                    handshakeResponse = cached.response
-                } else {
-                    client = PeekabooBridgeClient(socketPath: socketPath)
-                    handshakeResponse = try await client.handshake(client: identity, requestedHost: nil)
-                }
+                let cached = try await cache.handshake(candidate, identity: identity)
+                client = cached.client
+                handshakeResponse = cached.response
                 try Task.checkCancellation()
                 if let requiredOwner,
                    !self.screenCaptureKitHostMatchesOwner(handshake: handshakeResponse, owner: requiredOwner) {
                     continue
                 }
+                if let guiPermissionCandidate,
+                   !deferredPaths.contains(socketPath),
+                   !candidates.contains(guiPermissionCandidate) ||
+                   pendingCandidates[candidateIndex...].contains(guiPermissionCandidate),
+                   handshakeResponse.hostKind == .onDemand,
+                   let permissions = handshakeResponse.permissions,
+                   !permissions.screenRecording || !permissions.accessibility ||
+                   (permissions.reportsPostEvent && !permissions.postEvent),
+                   let gui = try? await cache.handshake(guiPermissionCandidate, identity: identity),
+                   self.daemonIsProvablyWeaker(handshakeResponse, than: gui.response) {
+                    // The exact-build-only pass defers to the full candidate pass. In that
+                    // pass keep weaker daemons as fallbacks after the GUI, never discard them.
+                    if candidates.contains(guiPermissionCandidate) {
+                        deferredPaths.insert(socketPath)
+                        pendingCandidates.append(candidate)
+                    }
+                    continue
+                }
+                try Task.checkCancellation()
                 if options.requiresScreenCaptureKitOwnerCapability,
                    !options.usesPerToolSnapshotInvalidation,
                    ObservationCommandSupport.captureEnginePreference(
@@ -908,6 +945,16 @@ extension RuntimeHostResolver {
                 throw error
             } catch let error as CancellationError {
                 throw error
+            } catch let error as PeekabooBridgeErrorEnvelope where error.isLocalHostAuthenticationFailure {
+                if Task.isCancelled {
+                    throw CancellationError()
+                }
+                if preserveHostAuthenticationFailure {
+                    throw error
+                }
+                if reportUntrustedHosts {
+                    permissionRejections.append("untrusted host via \(socketPath)")
+                }
             } catch {
                 if Task.isCancelled {
                     throw CancellationError()

@@ -1229,6 +1229,364 @@ extension PeekabooSettingsConfigHydrationTests {
             #expect(refreshedAgent.defaultModelSelection == "local-proxy/mini")
         }
     }
+
+    @Test
+    func `Ollama base URL edits stick in config and a default clears the saved URL`() throws {
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
+            let configPath = configDir.appendingPathComponent("config.json")
+            let configJSON = """
+            {
+              "aiProviders": {
+                "providers": "anthropic/claude-opus-4-8,ollama/llava:latest",
+                "ollamaBaseUrl": "http://ollama.example:11434"
+              },
+              "agent": {
+                "defaultModel": "claude-opus-4-8",
+                "temperature": 0.3,
+                "maxTokens": 4096
+              },
+              "defaults": {
+                "savePath": "~/Desktop/Screenshots",
+                "imageFormat": "png"
+              },
+              "logging": {
+                "level": "info",
+                "path": "~/.peekaboo/logs/peekaboo.log"
+              }
+            }
+            """
+            try configJSON.write(to: configPath, atomically: true, encoding: .utf8)
+            ConfigurationManager.shared.resetForTesting()
+            _ = ConfigurationManager.shared.loadConfiguration()
+
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
+            #expect(settings.ollamaBaseURL == "http://ollama.example:11434")
+
+            settings.ollamaBaseURL = "http://127.0.0.1:11435"
+            ConfigurationManager.shared.resetForTesting()
+            _ = ConfigurationManager.shared.loadConfiguration()
+            #expect(ConfigurationManager.shared.getOllamaBaseURL() == "http://127.0.0.1:11435")
+            #expect(try Self.ollamaBaseURL(in: configPath) == "http://127.0.0.1:11435")
+            try Self.expectUnrelatedSettings(in: configPath)
+
+            settings.ollamaBaseURL = "http://localhost:11434"
+            ConfigurationManager.shared.resetForTesting()
+            _ = ConfigurationManager.shared.loadConfiguration()
+            #expect(ConfigurationManager.shared.getOllamaBaseURL() == "http://localhost:11434")
+            #expect(try Self.ollamaBaseURL(in: configPath) == nil)
+            try Self.expectUnrelatedSettings(in: configPath)
+
+            let reloaded = PeekabooSettings(credentialCoordinator: credentialCoordinator)
+            #expect(reloaded.ollamaBaseURL == "http://localhost:11434")
+            #expect(reloaded.selectedModel == "claude-opus-4-8")
+            #expect(reloaded.temperature == 0.3)
+            #expect(reloaded.maxTokens == 4096)
+        }
+    }
+
+    @Test
+    func `a new config file records an Ollama URL and drops the default`() throws {
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
+            let configPath = configDir.appendingPathComponent("config.json")
+            #expect(!FileManager.default.fileExists(atPath: configPath.path))
+
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
+            settings.ollamaBaseURL = "http://127.0.0.1:11435"
+            #expect(FileManager.default.fileExists(atPath: configPath.path))
+            let stored = try Self.ollamaBaseURL(in: configPath)
+            #expect(stored == "http://127.0.0.1:11435")
+
+            settings.ollamaBaseURL = "http://localhost:11434"
+            let cleared = try Self.ollamaBaseURL(in: configPath)
+            #expect(cleared == nil)
+            ConfigurationManager.shared.resetForTesting()
+            _ = ConfigurationManager.shared.loadConfiguration()
+            #expect(ConfigurationManager.shared.getOllamaBaseURL() == "http://localhost:11434")
+        }
+    }
+
+    @Test
+    func `a v4_9_5 config keeps its other settings when the Ollama URL changes`() throws {
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
+            let configPath = configDir.appendingPathComponent("config.json")
+            let template = """
+            {
+              "aiProviders": {
+              "providers": "openai/gpt-5.6,anthropic/claude-opus-5"
+              },
+              "defaults": {
+                "savePath": "~/Desktop/Screenshots",
+                "imageFormat": "png",
+                "captureMode": "window",
+                "captureFocus": "background"
+              },
+              "logging": {
+                "level": "info",
+                "path": "~/.peekaboo/logs/peekaboo.log"
+              }
+            }
+            """
+            try template.write(to: configPath, atomically: true, encoding: .utf8)
+            ConfigurationManager.shared.resetForTesting()
+            _ = ConfigurationManager.shared.loadConfiguration()
+
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
+            settings.ollamaBaseURL = "http://127.0.0.1:11435"
+            let custom = try Self.object(in: configPath)
+            let customProviders = try #require(custom["aiProviders"] as? [String: Any])
+            let customDefaults = try #require(custom["defaults"] as? [String: Any])
+            let customLogging = try #require(custom["logging"] as? [String: Any])
+            #expect(customProviders["ollamaBaseUrl"] as? String == "http://127.0.0.1:11435")
+            #expect(customProviders["providers"] as? String == "openai/gpt-5.6,anthropic/claude-opus-5")
+            #expect(customDefaults["savePath"] as? String == "~/Desktop/Screenshots")
+            #expect(customDefaults["imageFormat"] as? String == "png")
+            #expect(customDefaults["captureMode"] as? String == "window")
+            #expect(customDefaults["captureFocus"] as? String == "background")
+            #expect(customLogging["level"] as? String == "info")
+            #expect(customLogging["path"] as? String == "~/.peekaboo/logs/peekaboo.log")
+
+            settings.ollamaBaseURL = "http://localhost:11434"
+            let cleared = try Self.object(in: configPath)
+            let clearedProviders = try #require(cleared["aiProviders"] as? [String: Any])
+            #expect(clearedProviders["ollamaBaseUrl"] == nil)
+            #expect(clearedProviders["providers"] as? String == "openai/gpt-5.6,anthropic/claude-opus-5")
+            #expect((cleared["defaults"] as? [String: Any])?["captureMode"] as? String == "window")
+        }
+    }
+
+    @Test
+    func `Custom vision model writes only agent visionModel`() throws {
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
+            let configPath = configDir.appendingPathComponent("config.json")
+            let template = """
+            {
+              "aiProviders": {
+                "providers": "openai/gpt-5.6,anthropic/claude-opus-5"
+              },
+              "defaults": {
+                "savePath": "~/Desktop/Screenshots",
+                "imageFormat": "png",
+                "captureMode": "window",
+                "captureFocus": "background"
+              },
+              "logging": {
+                "level": "info",
+                "path": "~/.peekaboo/logs/peekaboo.log"
+              }
+            }
+            """
+            try template.write(to: configPath, atomically: true, encoding: .utf8)
+            ConfigurationManager.shared.resetForTesting()
+            _ = ConfigurationManager.shared.loadConfiguration()
+
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
+            settings.useCustomVisionModel = true
+            settings.customVisionProvider = "anthropic"
+            settings.customVisionModel = "claude-opus-5"
+
+            let saved = try Self.object(in: configPath)
+            let savedProviders = try #require(saved["aiProviders"] as? [String: Any])
+            let savedAgent = try #require(saved["agent"] as? [String: Any])
+            #expect(savedAgent["visionModel"] as? String == "anthropic/claude-opus-5")
+            #expect(savedAgent["defaultModel"] == nil)
+            #expect(savedProviders["providers"] as? String == "openai/gpt-5.6,anthropic/claude-opus-5")
+            #expect((saved["defaults"] as? [String: Any])?["captureMode"] as? String == "window")
+            #expect((saved["logging"] as? [String: Any])?["level"] as? String == "info")
+
+            settings.useCustomVisionModel = false
+            let cleared = try Self.object(in: configPath)
+            let clearedProviders = try #require(cleared["aiProviders"] as? [String: Any])
+            let clearedAgent = cleared["agent"] as? [String: Any]
+            #expect(clearedAgent?["visionModel"] == nil)
+            #expect(clearedProviders["providers"] as? String == "openai/gpt-5.6,anthropic/claude-opus-5")
+            #expect((cleared["defaults"] as? [String: Any])?["captureFocus"] as? String == "background")
+        }
+    }
+
+    @Test
+    func `Removing agent visionModel stays removed`() throws {
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
+            let configPath = configDir.appendingPathComponent("config.json")
+            try Self.writeVisionFixture(
+                to: configPath,
+                providers: "openai/gpt-5.6,anthropic/claude-opus-5",
+                visionModel: nil)
+            ConfigurationManager.shared.resetForTesting()
+            _ = ConfigurationManager.shared.loadConfiguration()
+
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
+            settings.useCustomVisionModel = true
+            settings.customVisionProvider = "anthropic"
+            settings.customVisionModel = "claude-opus-5"
+            #expect(
+                try (Self.object(in: configPath)["agent"] as? [String: Any])?["visionModel"] as? String
+                    == "anthropic/claude-opus-5")
+
+            var stored = try Self.object(in: configPath)
+            var agent = try #require(stored["agent"] as? [String: Any])
+            agent.removeValue(forKey: "visionModel")
+            stored["agent"] = agent
+            try JSONSerialization.data(withJSONObject: stored, options: [.prettyPrinted])
+                .write(to: configPath)
+            ConfigurationManager.shared.resetForTesting()
+
+            let reloaded = PeekabooSettings(credentialCoordinator: credentialCoordinator)
+            let reloadedAgent = try Self.object(in: configPath)["agent"] as? [String: Any]
+            #expect(reloadedAgent?["visionModel"] == nil)
+            #expect(!reloaded.useCustomVisionModel)
+            #expect(reloaded.customVisionProvider.isEmpty)
+            #expect(
+                try (Self.object(in: configPath)["aiProviders"] as? [String: Any])?["providers"] as? String
+                    == "openai/gpt-5.6,anthropic/claude-opus-5")
+        }
+    }
+
+    @Test
+    func `A legacy vision toggle is copied once`() throws {
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
+            let configPath = configDir.appendingPathComponent("config.json")
+            try Self.writeVisionFixture(to: configPath, providers: "openai/gpt-5.6", visionModel: nil)
+            let defaults = UserDefaults.standard
+            defaults.set(true, forKey: "peekaboo.useCustomVisionModel")
+            defaults.set("anthropic", forKey: "peekaboo.customVisionProvider")
+            defaults.set("claude-opus-5", forKey: "peekaboo.customVisionModel")
+            ConfigurationManager.shared.resetForTesting()
+
+            _ = PeekabooSettings(credentialCoordinator: credentialCoordinator)
+            #expect(
+                try (Self.object(in: configPath)["agent"] as? [String: Any])?["visionModel"] as? String
+                    == "anthropic/claude-opus-5")
+
+            var stored = try Self.object(in: configPath)
+            var agent = try #require(stored["agent"] as? [String: Any])
+            agent.removeValue(forKey: "visionModel")
+            stored["agent"] = agent
+            try JSONSerialization.data(withJSONObject: stored, options: [.prettyPrinted])
+                .write(to: configPath)
+            ConfigurationManager.shared.resetForTesting()
+
+            _ = PeekabooSettings(credentialCoordinator: credentialCoordinator)
+            #expect(try (Self.object(in: configPath)["agent"] as? [String: Any])?["visionModel"] == nil)
+        }
+    }
+
+    @Test
+    func `A failed vision config load keeps the saved choice`() throws {
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
+            let configPath = configDir.appendingPathComponent("config.json")
+            try "{".write(to: configPath, atomically: true, encoding: .utf8)
+            let defaults = UserDefaults.standard
+            defaults.set(true, forKey: "peekaboo.useCustomVisionModel")
+            defaults.set("anthropic", forKey: "peekaboo.customVisionProvider")
+            defaults.set("claude-opus-5", forKey: "peekaboo.customVisionModel")
+            defaults.set(true, forKey: "peekaboo.visionModelConfigAuthoritative")
+            ConfigurationManager.shared.resetForTesting()
+
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
+            #expect(settings.useCustomVisionModel)
+            #expect(settings.customVisionProvider == "anthropic")
+            #expect(settings.customVisionModel == "claude-opus-5")
+            #expect(defaults.bool(forKey: "peekaboo.useCustomVisionModel"))
+            #expect(defaults.string(forKey: "peekaboo.customVisionProvider") == "anthropic")
+        }
+    }
+
+    @Test
+    func `A failed vision backfill stays retryable`() throws {
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
+            let configPath = configDir.appendingPathComponent("config.json")
+            try "{".write(to: configPath, atomically: true, encoding: .utf8)
+            let defaults = UserDefaults.standard
+            defaults.set(true, forKey: "peekaboo.useCustomVisionModel")
+            defaults.set("anthropic", forKey: "peekaboo.customVisionProvider")
+            defaults.set("claude-opus-5", forKey: "peekaboo.customVisionModel")
+            ConfigurationManager.shared.resetForTesting()
+
+            _ = PeekabooSettings(credentialCoordinator: credentialCoordinator)
+            #expect(!defaults.bool(forKey: "peekaboo.visionModelConfigAuthoritative"))
+
+            try Self.writeVisionFixture(to: configPath, providers: "openai/gpt-5.6", visionModel: nil)
+            ConfigurationManager.shared.resetForTesting()
+            _ = PeekabooSettings(credentialCoordinator: credentialCoordinator)
+            #expect(
+                try (Self.object(in: configPath)["agent"] as? [String: Any])?["visionModel"] as? String
+                    == "anthropic/claude-opus-5")
+        }
+    }
+
+    @Test
+    func `Vision provider reloads outside the agent provider list`() throws {
+        try withIsolatedSettingsEnvironment { configDir, credentialCoordinator in
+            let configPath = configDir.appendingPathComponent("config.json")
+            try Self.writeVisionFixture(
+                to: configPath,
+                providers: "openai/gpt-5.5",
+                visionModel: "anthropic/claude-opus-5",
+                defaultModel: "openai/gpt-5.5")
+            ConfigurationManager.shared.resetForTesting()
+
+            let settings = PeekabooSettings(credentialCoordinator: credentialCoordinator)
+            #expect(settings.useCustomVisionModel)
+            #expect(settings.customVisionProvider == "anthropic")
+            #expect(settings.customVisionModel == "claude-opus-5")
+            #expect(settings.selectedProvider == "openai")
+            #expect(
+                try (Self.object(in: configPath)["aiProviders"] as? [String: Any])?["providers"] as? String
+                    == "openai/gpt-5.5")
+        }
+    }
+
+    private static func writeVisionFixture(
+        to configPath: URL,
+        providers: String,
+        visionModel: String?,
+        defaultModel: String? = nil) throws
+    {
+        var agent: [String: Any] = [:]
+        if let defaultModel {
+            agent["defaultModel"] = defaultModel
+        }
+        if let visionModel {
+            agent["visionModel"] = visionModel
+        }
+        var root: [String: Any] = [
+            "aiProviders": ["providers": providers],
+            "defaults": [
+                "savePath": "~/Desktop/Screenshots",
+                "imageFormat": "png",
+            ],
+        ]
+        if !agent.isEmpty {
+            root["agent"] = agent
+        }
+        try JSONSerialization.data(withJSONObject: root, options: [.prettyPrinted]).write(to: configPath)
+    }
+
+    private static func ollamaBaseURL(in configPath: URL) throws -> String? {
+        let providers = try Self.object(in: configPath)["aiProviders"] as? [String: Any]
+        return providers?["ollamaBaseUrl"] as? String
+    }
+
+    private static func expectUnrelatedSettings(in configPath: URL) throws {
+        let object = try Self.object(in: configPath)
+        let providers = try #require(object["aiProviders"] as? [String: Any])
+        let agent = try #require(object["agent"] as? [String: Any])
+        let defaults = try #require(object["defaults"] as? [String: Any])
+        let logging = try #require(object["logging"] as? [String: Any])
+        #expect(providers["providers"] as? String == "anthropic/claude-opus-4-8,ollama/llava:latest")
+        #expect(agent["defaultModel"] as? String == "claude-opus-4-8")
+        #expect(agent["temperature"] as? Double == 0.3)
+        #expect(agent["maxTokens"] as? Int == 4096)
+        #expect(defaults["savePath"] as? String == "~/Desktop/Screenshots")
+        #expect(defaults["imageFormat"] as? String == "png")
+        #expect(logging["level"] as? String == "info")
+        #expect(logging["path"] as? String == "~/.peekaboo/logs/peekaboo.log")
+    }
+
+    private static func object(in configPath: URL) throws -> [String: Any] {
+        try #require(
+            JSONSerialization.jsonObject(with: Data(contentsOf: configPath)) as? [String: Any])
+    }
 }
 
 /// Hosted CI only: this surrounding Settings graph still uses ambient defaults and provider singletons.

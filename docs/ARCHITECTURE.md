@@ -48,7 +48,7 @@ services.installAgentRuntimeDefaults()
 
 Keep that instance alive while its installed factories are used: they capture it without retaining it. Tests and
 embedded hosts can instead pass explicit service contexts. See
-[`PeekabooServiceProviding`](../Core/PeekabooCore/Sources/PeekabooAgentRuntime/Support/PeekabooServiceProviding.swift)
+[`PeekabooServiceProviding`](https://github.com/openclaw/Peekaboo/blob/main/Core/PeekabooCore/Sources/PeekabooAgentRuntime/Support/PeekabooServiceProviding.swift)
 for the installation boundary and [agent chat](agent-chat.md) for execution lifecycle.
 
 `PeekabooAIService` resolves configured provider strings to Tachikoma `LanguageModel` values. Configuration and provider
@@ -95,6 +95,12 @@ Service orchestration and AppKit-facing state use `MainActor`. Blocking native w
 or transport queues so they do not hold the main actor or Swift's cooperative executor. A timeout does not necessarily
 stop an underlying native call: for example, the application-inventory worker keeps its slot until that call returns,
 refusing new work instead of growing a queue behind it.
+
+Mac chat runs accepted follow-ups in order through one cancellable task. Stop cancels the active task and drops
+pending prompts. A prompt submitted while cancellation finishes waits for a new task; another Stop drops that prompt
+too. Queued prompts retain the session that accepted them. Resuming another session selects it only when its prompt
+starts, and a deleted session's queued prompts are rejected before provider execution instead of moving to the current
+conversation.
 
 Desktop operation lane admission uses one monotonic 15-second budget across its turnstiles and global, process, and
 window lock claims. Acquiring a lock after expiry does not authorize the operation: Peekaboo releases the acquired

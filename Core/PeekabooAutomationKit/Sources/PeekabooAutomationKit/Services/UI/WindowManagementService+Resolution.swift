@@ -130,7 +130,7 @@ extension WindowManagementService {
         }
 
         let processIdentifiers = NSWorkspace.shared.runningApplications.compactMap { application -> pid_t? in
-            application.isTerminated ? nil : application.processIdentifier
+            application.isTerminated ? nil : RunningApplicationProcessIdentity.resolve(application)
         }
         if let snapshot = await Task.detached(priority: .userInitiated, operation: {
             BoundedAXWindowIdentityScanner.find(
@@ -204,10 +204,12 @@ extension WindowManagementService {
     }
 
     func findFirstWindow(for app: ServiceApplicationInfo) throws -> Element {
-        guard let runningApp = NSRunningApplication(processIdentifier: app.processIdentifier) else {
+        guard let runningApp = NSRunningApplication(processIdentifier: app.processIdentifier),
+              RunningApplicationProcessIdentity.resolve(runningApp) == app.processIdentifier
+        else {
             throw NotFoundError.application(app.name)
         }
-        let appElement = AXApp(runningApp).element
+        let appElement = Element(AXUIElementCreateApplication(app.processIdentifier))
 
         guard let windows = appElement.windows(), !windows.isEmpty else {
             throw NotFoundError.window(app: app.name)
@@ -222,10 +224,12 @@ extension WindowManagementService {
     }
 
     func findWindowByIndex(for app: ServiceApplicationInfo, index: Int) throws -> Element {
-        guard let runningApp = NSRunningApplication(processIdentifier: app.processIdentifier) else {
+        guard let runningApp = NSRunningApplication(processIdentifier: app.processIdentifier),
+              RunningApplicationProcessIdentity.resolve(runningApp) == app.processIdentifier
+        else {
             throw NotFoundError.application(app.name)
         }
-        let appElement = AXApp(runningApp).element
+        let appElement = Element(AXUIElementCreateApplication(app.processIdentifier))
 
         guard let windows = appElement.windows() else {
             throw NotFoundError.window(app: app.name)
@@ -233,7 +237,7 @@ extension WindowManagementService {
 
         guard index >= 0, index < windows.count else {
             throw PeekabooError.invalidInput(
-                "windowIndex: Index \(index) is out of range. Available windows: 0-\(windows.count - 1)")
+                WindowIndexRangeError.message(index: index, count: windows.count))
         }
 
         return windows[index]
@@ -277,7 +281,9 @@ extension WindowManagementService {
         appIdentifier: String,
         app: ServiceApplicationInfo) async throws -> Element?
     {
-        guard let runningApp = NSRunningApplication(processIdentifier: app.processIdentifier) else {
+        guard let runningApp = NSRunningApplication(processIdentifier: app.processIdentifier),
+              RunningApplicationProcessIdentity.resolve(runningApp) == app.processIdentifier
+        else {
             throw NotFoundError.application(app.name)
         }
 
@@ -297,8 +303,10 @@ extension WindowManagementService {
 
     func findWindowById(_ id: Int, in apps: [ServiceApplicationInfo]) throws -> Element {
         for app in apps {
-            guard let runningApp = NSRunningApplication(processIdentifier: app.processIdentifier) else { continue }
-            let appElement = AXApp(runningApp).element
+            guard let runningApp = NSRunningApplication(processIdentifier: app.processIdentifier),
+                  RunningApplicationProcessIdentity.resolve(runningApp) == app.processIdentifier
+            else { continue }
+            let appElement = Element(AXUIElementCreateApplication(app.processIdentifier))
 
             guard let windows = appElement.windows() else { continue }
             for window in windows {

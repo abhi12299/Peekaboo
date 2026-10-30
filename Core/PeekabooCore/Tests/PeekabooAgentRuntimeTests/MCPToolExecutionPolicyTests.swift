@@ -496,7 +496,7 @@ struct MCPToolExecutionPolicyTests {
                 windowContext: windowContext))
         let snapshots = try await InMemorySnapshotManager.containing(detectionResult)
         let context = try Self.makePolicyContext(snapshots: snapshots, desktopTarget: desktopTarget)
-        let toolSnapshot = await UISnapshotManager.shared.createSnapshot(id: snapshotID)
+        let toolSnapshot = await context.uiSnapshots.createSnapshot(id: snapshotID)
         await toolSnapshot.setTargetMetadata(from: windowContext)
         let capture = PolicySnapshotArgumentCapture()
 
@@ -506,7 +506,7 @@ struct MCPToolExecutionPolicyTests {
                 "on": "B1",
                 "action": "AXIncrement",
             ]))
-        await UISnapshotManager.shared.removeSnapshot(id: snapshotID)
+        await context.uiSnapshots.removeSnapshot(id: snapshotID)
 
         #expect(!response.isError)
         #expect(await capture.snapshotID == snapshotID)
@@ -549,7 +549,7 @@ struct MCPToolExecutionPolicyTests {
                 windowContext: windowContext))
         let snapshots = try await InMemorySnapshotManager.containing(detectionResult)
         let context = try Self.makePolicyContext(snapshots: snapshots, desktopTarget: desktopTarget)
-        let toolSnapshot = await UISnapshotManager.shared.createSnapshot(id: snapshotID)
+        let toolSnapshot = await context.uiSnapshots.createSnapshot(id: snapshotID)
         await toolSnapshot.setTargetMetadata(from: windowContext)
         let capture = PolicySnapshotArgumentCapture()
         let typeCapture = PolicySnapshotArgumentCapture()
@@ -649,7 +649,7 @@ struct MCPToolExecutionPolicyTests {
                 "keys": ["return"],
                 "snapshot": snapshotID,
             ]))
-        await UISnapshotManager.shared.removeSnapshot(id: snapshotID)
+        await context.uiSnapshots.removeSnapshot(id: snapshotID)
 
         #expect(response.isError)
         #expect(blankResponse.isError)
@@ -699,6 +699,7 @@ struct MCPToolExecutionPolicyTests {
             clipboard: base.clipboard,
             browser: base.browser,
             permissionsStatusProvider: base,
+            snapshotOwner: MCPToolSnapshotOwner(),
             executionPolicy: .backgroundOnly)
     }
 

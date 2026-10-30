@@ -185,6 +185,17 @@ struct ExplicitAutoClassicOwnerRuntimeTests {
             }
             #expect(remoteFactoryEngines.isEmpty)
             #expect(handshakes == [socket])
+        } else if scenario == "implicit", socketSource == "persistent" {
+            // Persistent MCP/Agent runtimes start locally and refuse only capture tools (#1145).
+            let resolution = try await RuntimeHostResolver.resolveServices(
+                options: options,
+                environment: environment,
+                configurationInput: nil,
+                dependencies: dependencies
+            )
+            #expect(resolution.toolCapturePreflightRefusal != nil)
+            #expect(resolution.selectedRemoteSocketPath == nil)
+            #expect(remoteFactoryEngines.isEmpty)
         } else {
             let error = await #expect(throws: PreDispatchActionError.self) {
                 _ = try await RuntimeHostResolver.resolveServices(
@@ -207,7 +218,7 @@ struct ExplicitAutoClassicOwnerRuntimeTests {
             #expect(ownerInspections == 1)
         }
         #expect(ownerClaims == 0)
-        #expect(localFactories == 0)
+        #expect(localFactories == (scenario == "implicit" && socketSource == "persistent" ? 1 : 0))
     }
 
     private static func handshake(

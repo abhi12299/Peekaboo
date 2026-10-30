@@ -125,12 +125,13 @@ struct DaemonLaunchPolicyTests {
 
     @Test
     func `daemon launch reports a readiness timeout`() async {
-        let executable = URL(fileURLWithPath: "/bin/sleep")
+        // Stay alive until cleanup even if the parent is descheduled beyond its readiness budget.
+        let executable = URL(fileURLWithPath: "/usr/bin/tail")
 
         do {
             _ = try await DaemonLaunchPolicy.launchDaemon(
                 socketPath: "/tmp/peekaboo-daemon-timeout-\(UUID().uuidString).sock",
-                arguments: ["2"],
+                arguments: ["-f", "/dev/null"],
                 timeout: 0.05,
                 executableURL: executable,
                 logHandle: .nullDevice
@@ -143,7 +144,10 @@ struct DaemonLaunchPolicyTests {
             }
             #expect(timeout == 0.05)
             #expect(elapsed >= timeout)
-            #expect(lastProbeError == nil)
+            // The shared budget can expire while a missing-socket probe waits for the executor.
+            if let lastProbeError {
+                #expect(lastProbeError == "Daemon readiness probe exceeded the remaining startup budget")
+            }
             #expect(error.localizedDescription.contains("last probe:"))
             #expect(error.localizedDescription.contains(logURL.path))
         } catch {
@@ -157,20 +161,22 @@ struct DaemonLaunchPolicyTests {
     ) async throws {
         var expected = PeekabooBridgeErrorEnvelope(code: code, message: "synthetic trust or protocol failure")
         expected.isLocalHostAuthenticationFailure = code == .unauthorizedClient
+        var probeCallCount = 0
         let pidURL = FileManager.default.temporaryDirectory.appendingPathComponent("pb-probe-\(UUID()).pid")
         defer {
             try? FileManager.default.removeItem(at: pidURL)
             try? FileManager.default.removeItem(atPath: pidURL.path + ".tmp")
         }
+        // Use the normal startup budget for PID publication; the contract here is one permanent probe failure.
         do {
             _ = try await DaemonLaunchPolicy.launchDaemon(
                 socketPath: "/tmp/peekaboo-readiness-\(UUID().uuidString).sock",
-                arguments: ["-c", "\(Self.writePIDCommand(to: pidURL)); exec /bin/sleep 30"],
-                timeout: 2,
+                arguments: ["-c", "\(Self.writePIDCommand(to: pidURL)); exec /usr/bin/tail -f /dev/null"],
                 executableURL: URL(fileURLWithPath: "/bin/sh"),
                 logHandle: .nullDevice,
                 probe: { _ in
-                    _ = try await Self.waitForPID(at: pidURL)
+                    probeCallCount += 1
+                    _ = try #require(try await Self.waitForPID(at: pidURL))
                     throw expected
                 }
             )
@@ -180,6 +186,7 @@ struct DaemonLaunchPolicyTests {
             #expect(error.message == expected.message)
             #expect(error.isLocalHostAuthenticationFailure == expected.isLocalHostAuthenticationFailure)
         }
+        #expect(probeCallCount == 1)
         let stoppedPID = try #require(try await Self.waitForPID(at: pidURL))
         #expect(kill(stoppedPID, 0) == -1)
         #expect(errno == ESRCH)
@@ -187,14 +194,18 @@ struct DaemonLaunchPolicyTests {
 
     @Test
     func `readiness timeout includes the last transient probe failure`() async throws {
+        var observedTransientFailure = false
         do {
             _ = try await DaemonLaunchPolicy.launchDaemon(
                 socketPath: "/tmp/peekaboo-readiness-\(UUID().uuidString).sock",
-                arguments: ["30"],
-                timeout: 0.05,
-                executableURL: URL(fileURLWithPath: "/bin/sleep"),
+                arguments: ["-f", "/dev/null"],
+                timeout: 2,
+                executableURL: URL(fileURLWithPath: "/usr/bin/tail"),
                 logHandle: .nullDevice,
-                probe: { _ in throw POSIXError(.ECONNRESET) }
+                probe: { _ in
+                    observedTransientFailure = true
+                    throw POSIXError(.ECONNRESET)
+                }
             )
             Issue.record("Expected a readiness timeout")
         } catch let error as DaemonLaunchPolicy.DaemonLaunchError {
@@ -203,7 +214,10 @@ struct DaemonLaunchPolicyTests {
                 return
             }
             #expect(elapsed >= timeout)
-            #expect(lastProbeError == POSIXError(.ECONNRESET).localizedDescription)
+            #expect(observedTransientFailure)
+            // A later shared-budget expiry is itself the last observed probe failure.
+            #expect(lastProbeError == POSIXError(.ECONNRESET).localizedDescription ||
+                lastProbeError == "Daemon readiness probe exceeded the remaining startup budget")
             #expect(error.localizedDescription.contains("elapsed"))
         }
     }
@@ -322,5 +336,39 @@ struct DaemonLaunchPolicyTests {
         #expect(kill(stoppedPID, 0) == -1)
         #expect(errno == ESRCH)
         childPID = nil
+    }
+}
+
+extension DaemonLaunchPolicyTests {
+    @Test(arguments: [nil, "1", "0"] as [String?])
+    func `daemon launch propagates unsigned developer opt in`(optIn: String?) async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("pd-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let output = directory.appendingPathComponent("environment")
+        var environment = ["PATH": "/usr/bin:/bin"]
+        environment["PEEKABOO_ALLOW_UNSIGNED_DAEMON"] = optIn
+        let sanitized = DaemonLaunchPolicy.onDemandDaemonEnvironment(environment)
+        #expect(sanitized["PEEKABOO_ALLOW_UNSIGNED_DAEMON"] == optIn)
+        do {
+            _ = try await DaemonLaunchPolicy.launchDaemon(
+                socketPath: directory.appendingPathComponent("d.sock").path,
+                arguments: [
+                    "-c",
+                    "printf '%s' \"${PEEKABOO_ALLOW_UNSIGNED_DAEMON-unset}\" > \"$1\"",
+                    "sh",
+                    output.path
+                ],
+                executableURL: URL(fileURLWithPath: "/bin/sh"),
+                logHandle: .nullDevice,
+                environment: sanitized
+            )
+            Issue.record("Expected the fixture process to exit")
+        } catch let error as DaemonLaunchPolicy.DaemonLaunchError {
+            guard case let .exited(_, code, _) = error else { throw error }
+            #expect(code == 0)
+        }
+        #expect(try String(contentsOf: output, encoding: .utf8) == (optIn ?? "unset"))
     }
 }

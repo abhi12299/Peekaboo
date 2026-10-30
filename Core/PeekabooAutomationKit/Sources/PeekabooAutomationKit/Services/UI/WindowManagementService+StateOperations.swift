@@ -445,7 +445,19 @@ extension WindowManagementService {
         var verification = PinnedWindowCloseVerification()
         while clock.now < deadline {
             try Task.checkCancellation()
-            let disposition = try await self.pinnedWindowClosePresence(expectedIdentity)
+            let disposition = try await readPinnedWindowClosePresence(
+                expectedIdentity: expectedIdentity,
+                windowServerIdentity: SystemIdentityResolver.windowIdentity(CGWindowID(expectedIdentity.windowID)),
+                processStartIdentityReader: SystemIdentityResolver.processStartIdentity,
+                spaceCountReader: Self.spaceCount(forWindowID:),
+                axPresenceReader: {
+                    await BoundedBackgroundWindowAX.windowPresence(expectedIdentity: expectedIdentity)
+                })
+            if disposition == .replacement {
+                throw PeekabooError.commandFailed(
+                    "Window \(expectedIdentity.windowID) changed identity during close")
+            }
+
             let decision = verification.observe(
                 disposition,
                 elapsed: startedAt.duration(to: clock.now))
@@ -463,47 +475,6 @@ extension WindowManagementService {
         return .retryClose
     }
 
-    private func pinnedWindowClosePresence(
-        _ expectedIdentity: WindowMutationIdentity) async throws -> PinnedWindowClosePresenceDisposition
-    {
-        let windowServerIdentity = SystemIdentityResolver.windowIdentity(CGWindowID(expectedIdentity.windowID))
-        let ownerGenerationMatches = windowServerIdentity.map {
-            $0.ownerProcessIdentifier == expectedIdentity.ownerProcessIdentifier &&
-                SystemIdentityResolver.processStartIdentity($0.ownerProcessIdentifier) ==
-                expectedIdentity.ownerProcessStartIdentity
-        } ?? true
-        guard ownerGenerationMatches else {
-            throw PeekabooError.commandFailed(
-                "Window \(expectedIdentity.windowID) changed owner identity during close")
-        }
-        let windowServerMatchesReceipt = windowServerIdentity.map { identity in
-            identity.ownerProcessIdentifier == expectedIdentity.ownerProcessIdentifier &&
-                identity.bounds == expectedIdentity.capturedBounds
-        }
-        let windowServerEntryOrderedOut = windowServerIdentity.map { identity in
-            pinnedWindowCloseRowIsOrderedOut(
-                isOnScreen: identity.isOnScreen,
-                spaceCount: identity.isOnScreen ? nil : Self.spaceCount(forWindowID: identity.windowID))
-        } ?? false
-        let axWindowPresence: PinnedMinimizedWindowAXPresence? =
-            if windowServerMatchesReceipt != true || windowServerEntryOrderedOut {
-                await BoundedBackgroundWindowAX.windowPresence(expectedIdentity: expectedIdentity)
-            } else {
-                nil
-            }
-        let disposition = pinnedWindowClosePresenceDisposition(
-            windowServerEntryPresent: windowServerIdentity != nil,
-            windowServerEntryMatchesReceipt: windowServerMatchesReceipt,
-            windowServerEntryOrderedOut: windowServerEntryOrderedOut,
-            minimizedAXPresence: axWindowPresence,
-            expectedMinimized: expectedIdentity.isMinimized == true)
-        if disposition == .replacement {
-            throw PeekabooError.commandFailed(
-                "Window \(expectedIdentity.windowID) changed identity during close")
-        }
-        return disposition
-    }
-
     /// Number of Spaces holding the window, or nil when the Space query is unreadable.
     private static func spaceCount(forWindowID windowID: CGWindowID) -> Int? {
         let connection = _CGSDefaultConnection()
@@ -515,6 +486,25 @@ extension WindowManagementService {
 
     func pinnedWindowDisappeared(_ expectedIdentity: WindowMutationIdentity) async throws -> Bool {
         try await self.verifyPinnedWindowClose(expectedIdentity) == .succeeded
+    }
+
+    public func windowClosePresence(
+        expectedIdentity: WindowMutationIdentity) async throws -> WindowClosePresence
+    {
+        let disposition = try await readPinnedWindowClosePresence(
+            expectedIdentity: expectedIdentity,
+            windowServerIdentity: SystemIdentityResolver.windowIdentity(CGWindowID(expectedIdentity.windowID)),
+            processStartIdentityReader: SystemIdentityResolver.processStartIdentity,
+            spaceCountReader: Self.spaceCount(forWindowID:),
+            axPresenceReader: {
+                await BoundedBackgroundWindowAX.windowPresence(expectedIdentity: expectedIdentity)
+            })
+        return switch disposition {
+        case .present: .present
+        case .missing: .missing
+        case .replacement: .replacement
+        case .unverifiable: .unverifiable
+        }
     }
 
     func requirePinnedForegroundCloseReadiness(
@@ -532,6 +522,10 @@ extension WindowManagementService {
         while ContinuousClock.now < deadline {
             try Task.checkCancellation()
             let targetProcessIdentifier = expectedIdentity.ownerProcessIdentifier
+            // Scan before the key-window read. A switch during the scan must not authorize
+            // the application that was frontmost when recovery started.
+            let scannedApplication = NSWorkspace.shared.frontmostApplication
+            let recoveredProcessIdentifier = foregroundCloseRecoveredProcessIdentifier(scannedApplication)
             lastReadiness = await readPinnedForegroundCloseReadiness(
                 focusSucceeded: focusSucceeded,
                 expectedIdentity: expectedIdentity,
@@ -545,7 +539,9 @@ extension WindowManagementService {
                     SystemIdentityResolver.processStartIdentity(expectedIdentity.ownerProcessIdentifier)
                 },
                 frontmostProcessIdentifierReader: {
-                    NSWorkspace.shared.frontmostApplication?.processIdentifier
+                    foregroundCloseCurrentProcessIdentifier(
+                        scannedApplication: scannedApplication,
+                        recoveredProcessIdentifier: recoveredProcessIdentifier)
                 },
                 windowIdentityValidator: {
                     SystemIdentityResolver.validateWindowMutationIdentity(expectedIdentity)
@@ -788,18 +784,105 @@ func readPinnedForegroundCloseReadiness(
     guard focusSucceeded else { return .focusFailed }
     let keyWindow = await keyWindowReader()
 
-    // AX messaging can block long enough for the user to switch applications or for the target
-    // process to restart. Revalidate the capture receipt, then sample both ownership signals only
-    // after that read, with no suspension before the policy can authorize a global shortcut.
+    // AX and PID recovery can both outlive a foreground switch or a process restart.
+    // Revalidate the receipt, finish frontmost recovery, then sample the process generation
+    // with no further suspension before the policy can authorize a global shortcut.
     guard windowIdentityValidator() else { return .windowIdentityMismatch }
-    let currentProcessStartIdentity = processStartIdentityReader()
     let frontmostProcessIdentifier = frontmostProcessIdentifierReader()
+    let currentProcessStartIdentity = processStartIdentityReader()
     return pinnedForegroundCloseReadiness(
         focusSucceeded: true,
         expectedIdentity: expectedIdentity,
         currentProcessStartIdentity: currentProcessStartIdentity,
         frontmostProcessIdentifier: frontmostProcessIdentifier,
         keyWindow: keyWindow)
+}
+
+struct ForegroundCloseFrontmostSample: Equatable {
+    var processIdentifier: pid_t?
+    /// The application whose missing PID was recovered is still the frontmost application.
+    var ownsRecoveredProcess: Bool
+}
+
+func foregroundCloseRecoveredProcessIdentifier(_ application: NSRunningApplication?) -> pid_t? {
+    guard let application, application.processIdentifier <= 0 else { return nil }
+    return RunningApplicationProcessIdentity.resolve(application)
+}
+
+@MainActor
+func foregroundCloseCurrentProcessIdentifier(
+    scannedApplication: NSRunningApplication?,
+    recoveredProcessIdentifier: pid_t?) -> pid_t?
+{
+    let currentApplication = NSWorkspace.shared.frontmostApplication
+    return foregroundCloseFrontmostProcessIdentifier(
+        reportedProcessIdentifier: currentApplication?.processIdentifier,
+        recover: { recoveredProcessIdentifier },
+        sampleAfterRecovery: {
+            let latestApplication = NSWorkspace.shared.frontmostApplication
+            return ForegroundCloseFrontmostSample(
+                processIdentifier: latestApplication?.processIdentifier,
+                ownsRecoveredProcess: foregroundCloseStillOwnsRecoveredProcess(
+                    scanned: scannedApplication,
+                    current: latestApplication))
+        })
+}
+
+func foregroundCloseStillOwnsRecoveredProcess(
+    scanned: NSRunningApplication?,
+    current: NSRunningApplication?) -> Bool
+{
+    guard let scanned, let current else { return false }
+    if scanned === current {
+        return true
+    }
+    guard let scannedLaunch = scanned.launchDate, scannedLaunch == current.launchDate else { return false }
+    return RunningApplicationProcessIdentity.Metadata(scanned) == RunningApplicationProcessIdentity.Metadata(current)
+}
+
+@MainActor
+func focusVerificationCurrentFrontmostProcessIdentifier(
+    recoverNonPositiveFrontmostProcessIdentifier: Bool) -> pid_t?
+{
+    let scannedApplication = NSWorkspace.shared.frontmostApplication
+    let reportedProcessIdentifier = scannedApplication?.processIdentifier
+    guard recoverNonPositiveFrontmostProcessIdentifier else { return reportedProcessIdentifier }
+    return foregroundCloseCurrentProcessIdentifier(
+        scannedApplication: scannedApplication,
+        recoveredProcessIdentifier: foregroundCloseRecoveredProcessIdentifier(scannedApplication))
+}
+
+func focusVerificationFrontmostProcessIdentifier(
+    recoverNonPositiveFrontmostProcessIdentifier: Bool,
+    reportedProcessIdentifier: pid_t?,
+    recover: () -> pid_t? = { nil },
+    sampleAfterRecovery: () -> ForegroundCloseFrontmostSample = {
+        ForegroundCloseFrontmostSample(processIdentifier: nil, ownsRecoveredProcess: true)
+    }) -> pid_t?
+{
+    guard recoverNonPositiveFrontmostProcessIdentifier else { return reportedProcessIdentifier }
+    return foregroundCloseFrontmostProcessIdentifier(
+        reportedProcessIdentifier: reportedProcessIdentifier,
+        recover: recover,
+        sampleAfterRecovery: sampleAfterRecovery)
+}
+
+func foregroundCloseFrontmostProcessIdentifier(
+    reportedProcessIdentifier: pid_t?,
+    recover: () -> pid_t?,
+    sampleAfterRecovery: () -> ForegroundCloseFrontmostSample = {
+        ForegroundCloseFrontmostSample(processIdentifier: nil, ownsRecoveredProcess: true)
+    }) -> pid_t?
+{
+    guard let reportedProcessIdentifier else { return nil }
+    guard reportedProcessIdentifier <= 0 else { return reportedProcessIdentifier }
+    guard let recovered = recover() else { return nil }
+    let sample = sampleAfterRecovery()
+    guard sample.ownsRecoveredProcess else { return nil }
+    if let processIdentifier = sample.processIdentifier, processIdentifier > 0, processIdentifier != recovered {
+        return nil
+    }
+    return recovered
 }
 
 func pinnedForegroundCloseReadiness(
@@ -874,23 +957,71 @@ func minimizedCloseRequiresForegroundFallback(isMinimized: Bool) -> Bool {
     isMinimized
 }
 
-/// Whether a WindowServer row belongs to a window AppKit ordered out (closed but not yet released),
-/// as opposed to one on another Space (which keeps its Space) or an unreadable Space query (`nil`).
-func pinnedWindowCloseRowIsOrderedOut(isOnScreen: Bool, spaceCount: Int?) -> Bool {
-    !isOnScreen && spaceCount == 0
+/// Whether an off-screen WindowServer row still belongs to a Space: a live window on another Space
+/// (or a hidden one) keeps its Space, while a closed window AppKit ordered out but has not released
+/// belongs to none. An unreadable Space query (`nil`) proves nothing.
+func pinnedWindowCloseRowIsOnAnotherSpace(isOnScreen: Bool, spaceCount: Int?) -> Bool {
+    !isOnScreen && (spaceCount ?? 0) > 0
+}
+
+@MainActor
+func readPinnedWindowClosePresence(
+    expectedIdentity: WindowMutationIdentity,
+    windowServerIdentity: SystemWindowIdentity?,
+    processStartIdentityReader: @MainActor (pid_t) -> UInt64?,
+    spaceCountReader: @MainActor (CGWindowID) -> Int? = { _ in nil },
+    axPresenceReader: @MainActor () async -> PinnedMinimizedWindowAXPresence) async throws
+    -> PinnedWindowClosePresenceDisposition
+{
+    let ownerGenerationMatches = windowServerIdentity.map {
+        $0.ownerProcessIdentifier == expectedIdentity.ownerProcessIdentifier &&
+            processStartIdentityReader($0.ownerProcessIdentifier) == expectedIdentity.ownerProcessStartIdentity
+    } ?? true
+    guard ownerGenerationMatches else {
+        throw PeekabooError.commandFailed(
+            "Window \(expectedIdentity.windowID) changed owner identity during close")
+    }
+    let windowServerMatchesReceipt = windowServerIdentity.map { identity in
+        identity.ownerProcessIdentifier == expectedIdentity.ownerProcessIdentifier &&
+            identity.bounds == expectedIdentity.capturedBounds
+    }
+    let windowServerEntryIsOnScreen = windowServerIdentity?.isOnScreen == true
+    // AXWindows omits windows on other Spaces, so an off-screen row that still holds a Space is presence
+    // on its own; only rows on no Space (or an unreadable Space query) defer to the exact AX scan.
+    let windowServerEntryOnAnotherSpace = windowServerIdentity.map { identity in
+        pinnedWindowCloseRowIsOnAnotherSpace(
+            isOnScreen: identity.isOnScreen,
+            spaceCount: identity.isOnScreen ? nil : spaceCountReader(identity.windowID))
+    } ?? false
+    // Closed, retained NSWindows can keep an off-screen catalog row. Only exact AX presence
+    // distinguishes those from live hidden or minimized windows.
+    let windowServerProvesPresence = windowServerMatchesReceipt == true &&
+        (windowServerEntryIsOnScreen || windowServerEntryOnAnotherSpace)
+    let axWindowPresence: PinnedMinimizedWindowAXPresence? = if !windowServerProvesPresence {
+        await axPresenceReader()
+    } else {
+        nil
+    }
+    return pinnedWindowClosePresenceDisposition(
+        windowServerEntryPresent: windowServerIdentity != nil,
+        windowServerEntryMatchesReceipt: windowServerMatchesReceipt,
+        windowServerEntryIsOnScreen: windowServerEntryIsOnScreen,
+        windowServerEntryOnAnotherSpace: windowServerEntryOnAnotherSpace,
+        minimizedAXPresence: axWindowPresence,
+        expectedMinimized: expectedIdentity.isMinimized == true)
 }
 
 func pinnedWindowClosePresenceDisposition(
     windowServerEntryPresent: Bool,
     windowServerEntryMatchesReceipt: Bool? = nil,
-    windowServerEntryOrderedOut: Bool = false,
+    windowServerEntryIsOnScreen: Bool,
+    windowServerEntryOnAnotherSpace: Bool = false,
     minimizedAXPresence: PinnedMinimizedWindowAXPresence?,
     expectedMinimized: Bool) -> PinnedWindowClosePresenceDisposition
 {
-    // A closed window can keep an ordered-out WindowServer row (off screen, on no Space) with its
-    // old frame for a while. Such a row alone is not presence; the AX scan decides.
-    let orderedOutClosedCandidate = windowServerEntryOrderedOut && !expectedMinimized
-    if windowServerEntryPresent, windowServerEntryMatchesReceipt != false, !orderedOutClosedCandidate {
+    if windowServerEntryPresent, windowServerEntryMatchesReceipt != false,
+       windowServerEntryIsOnScreen || windowServerEntryOnAnotherSpace
+    {
         return .present
     }
     if let minimizedAXPresence {
@@ -905,6 +1036,26 @@ func pinnedWindowClosePresenceDisposition(
         return .missing
     }
     return .unverifiable
+}
+
+/// Classifies the owner process before a close-verification AX scan.
+///
+/// An owner that has exited with no process at its PID took its windows with it, so the exact
+/// window is gone (for example the last window of an app that quits when it closes). A different
+/// process generation at the PID is still a replacement. Returns `nil` when the receipt's owner
+/// generation is still live and the AX scan should decide.
+func pinnedWindowCloseOwnerPresence(
+    expectedIdentity: WindowMutationIdentity,
+    observation: SystemIdentityResolver.ProcessStartIdentityObservation) -> PinnedMinimizedWindowAXPresence?
+{
+    switch observation {
+    case .absent:
+        .missing
+    case let .identity(identity) where identity == expectedIdentity.ownerProcessStartIdentity:
+        nil
+    case .identity, .permissionDenied, .unavailable:
+        .replacement
+    }
 }
 
 func pinnedMinimizedWindowAXPresence(
@@ -1125,8 +1276,15 @@ private enum BoundedBackgroundWindowAX {
 
     static func windowPresence(expectedIdentity: WindowMutationIdentity) async -> PinnedMinimizedWindowAXPresence {
         await self.perform(expectedIdentity: expectedIdentity) {
-            let processStartIdentityBeforeScan = SystemIdentityResolver.processStartIdentity(
+            let ownerObservationBeforeScan = SystemIdentityResolver.processStartIdentityObservation(
                 expectedIdentity.ownerProcessIdentifier)
+            if let ownerPresence = pinnedWindowCloseOwnerPresence(
+                expectedIdentity: expectedIdentity,
+                observation: ownerObservationBeforeScan)
+            {
+                return ownerPresence
+            }
+            let processStartIdentityBeforeScan = ownerObservationBeforeScan.identity
             guard SystemIdentityResolver.validateWindowMutationOwnerGeneration(expectedIdentity),
                   let windowID = CGWindowID(exactly: expectedIdentity.windowID)
             else {

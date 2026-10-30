@@ -2,6 +2,66 @@
 
 ## Unreleased
 
+- Clarify exact-window target-changed errors with unavailable identity versus changed components and whether validation failed before the operation, after capture, or after the operation. #1151.
+- Wait 250ms instead of 150ms before restoring the previous clipboard after a temporary paste, and document that restoration is time-based: an app that reads the clipboard later than the restore delay can paste the previous contents, so raise `--restore-delay` (MCP `restore_delay_ms`) for slow receivers. #1140, refs #1111.
+
+## 4.9.7 - 2026-10-23
+
+**Highlights:** Report `window close` through the daemon as closed when an app keeps the closed window alive; let `see` observe Chrome windows whose titles carry the app name or are elided; close apps that re-exec themselves with `--foreground`; and keep the Mac chat, menu bar and Inspector accurate.
+
+- Report `window close` through the daemon or Bridge as closed when the app keeps the closed `NSWindow` alive, instead of exiting 1 with an indeterminate postcondition: the Bridge readback now applies the same exact-window Accessibility presence check as the in-process path. Thanks @goutamadwant! #1131, fixes #1129.
+- Let `peekaboo see` observe Chrome and other apps whose Accessibility window title appends the application name or whose WindowServer title is middle-elided, instead of failing with "inconsistent response evidence: window-context window title". Thanks @L1uYun! #1130.
+- Close windows of apps that re-exec themselves with `window close --foreground`, whose frontmost PID AppKit reports as -1. Thanks @SebTardif! #1124.
+- Classify Dock separators and the Trash from their Accessibility subroles, so `peekaboo dock list` hides separators unless `--include-all` is passed, reports included separators as `separator` instead of blank `unknown` items, and identifies a localized Trash (such as "Papierkorb") as `trash`. #1120.
+- Use the Mac app's saved Vision model for image analysis even when its provider does not report vision support (OpenRouter, OpenAI-compatible, LM Studio and many Ollama models), surfacing the provider's error instead of silently switching models. Thanks @SebTardif! #1127.
+- Keep the Mac chat's streaming answer together when you queue a follow-up, and keep Retry on the prompt that failed. Thanks @SebTardif! #1126.
+- Show a failed Mac agent tool as failed, not completed, in the menu bar, while cancelled tools stay cancelled. Thanks @SebTardif! #1134.
+- Highlight the Inspector control in the front window under the pointer, including floating panels and popup items past their window, instead of the smallest control anywhere on screen; windows of untracked apps such as the Dock now stop the hover from reaching what they cover. Thanks @SebTardif! #1133.
+- Place Inspector highlight boxes on the correct display when a display does not start at the primary display's origin. Thanks @SebTardif! #1132.
+- Restore source builds after the pinned MCP Swift SDK commit became unreachable upstream when its pull request branch was rebased. #1135.
+- Remove the unused public `DialogError.inputSuppressedUnderTests` case from PeekabooAutomationKit along with the dead test-only dialog typing hook that threw it; release builds could never throw it, so only SwiftPM consumers that switch over every `DialogError` case need to drop that branch. #1123.
+
+## 4.9.6 - 2026-10-20
+
+**Highlights:** Find, inspect and capture apps that re-exec themselves on launch, such as Xcode's Device Hub, whose PID AppKit reports as -1; report `window close` as closed when an app keeps the closed window alive or quits; use the Mac app's saved Vision model for image analysis; and keep the Mac chat's Stop button, follow-ups, transcript, menu bar and recent sessions reliable.
+
+- See, inspect, list and capture apps that re-exec themselves on launch, such as Xcode's Device Hub, whose PID AppKit reports as -1, by recovering one verified live process with matching executable and application metadata. Thanks @lukemyself-hub! #1121, fixes #1119.
+- Report `window close` as closed when the app keeps the closed `NSWindow` alive, such as Calculator's About panel: an off-screen WindowServer row no longer counts as the window remaining once Accessibility no longer exposes it. Thanks @jandubois! #1116, fixes #1106.
+- Report `window close` as closed when the owning process exits during close verification (for example the last window of an app that quits) instead of failing with a changed-identity error; a reused PID still counts as a replacement. #1109, refs #1106.
+- Use the Mac app's saved Vision model for screenshots and image analysis: a custom choice is written to `agent.visionModel` in `config.json` (as `provider/modelId`) and used by `see`/`analyze` when no model is given, while "Same as agent model" removes it. Thanks @SebTardif! #1110.
+- Save the Mac app's Ollama base URL to `config.json` so the CLI uses it, and clear it when reset to `http://localhost:11434` instead of restoring the old URL on the next launch. Thanks @SebTardif! #1104.
+- Keep the Mac chat's Stop button attached to the running task when you send follow-ups: follow-ups now queue behind the active task and run in order, Stop cancels the in-flight provider request and discards queued follow-ups, and a queued prompt stays with the session it was sent from. Thanks @SebTardif! #1095.
+- Stop recording Mac chat prompts twice from the menu bar or queued follow-ups, stop appending a combined copy of the reply after multi-step runs, and title a new chat from its first prompt again. #1117.
+- Open the chat you clicked under Recent Sessions in the Mac menu bar instead of the one already selected; that window can continue or retry its chat without first switching the menu bar's selection. Thanks @SebTardif! #1108.
+- Keep the Mac menu bar's chat in sync with the conversation: new messages, streamed replies, generated titles and summaries now show up there, and deleting that chat no longer leaves it selected. Thanks @SebTardif! #1107.
+- Keep the Mac app's chat history when `sessions.json` cannot be decoded: move the unreadable file aside instead of overwriting it, save atomically, and show a notice while saves are blocked. Thanks @SebTardif! #1102.
+- Keep underscores inside words, such as `WINDOW_NOT_FOUND` or `browser_wait_for`, literal on the documentation site instead of rendering them as emphasis. Thanks @rudycelekli! #1112.
+- Move macOS CI and qualification jobs to Xcode 27 runners (except CodeQL Swift tracing), retain macOS 15 deployment and runtime-symbol checks, and smoke-test Intel artifacts under Rosetta.
+
+## 4.9.5 - 2026-10-16
+
+**Highlights:** Let unsigned source builds such as Homebrew core's `peekaboo` formula run commands in-process immediately instead of waiting on or aborting at daemons they cannot trust, with an explicit same-binary daemon opt-in; stop starting daemons that a granted Peekaboo.app host would outrank; and keep `see` and multi-app `quit` outcomes accurate.
+
+- Fall back to in-process execution immediately when an unsigned source build (such as Homebrew core's `peekaboo` formula) meets a daemon it cannot trust, instead of waiting out daemon startup or aborting, and add an explicit `PEEKABOO_ALLOW_UNSIGNED_DAEMON=1` opt-in that lets such a build trust only its own exact-binary daemon; release-signed builds ignore it. Thanks @fry69! #1089, #1064.
+- Skip auto-starting an on-demand daemon when a granted Peekaboo.app bridge host would be selected anyway, avoiding the daemon's startup wait and an idle permission-less daemon; lifecycle commands, snapshot-owned actions and explicit sockets still start it. #1082, follow-up to #1073.
+- Declare route-specific Accessibility and Event Synthesizing needs for `type`, `paste`, `press`/`hotkey`, `window`, `menu` and `menubar`, so hosts that explicitly lack them are skipped while grant-free routes and unknown host reports keep working. #1088.
+- Stop reporting complete Accessibility observations as incomplete when an app declines an inapplicable child attribute, such as Calculator's Help search field after a menu opens; preserve readable children and genuine read-failure warnings. Thanks @jandubois! #1094.
+- Keep a multi-application `app quit` cancelled after a suspected no-op reported as a no-op instead of a partial change that asks callers to recover a side effect. Thanks @SebTardif! #1098.
+- Stop shipping the CI runner's Swift toolchain directory as an `LC_RPATH` in released CLI binaries, and fail release builds that carry any non-system absolute rpath. #1099.
+- Show macOS 27's renamed "Device Control and Data Access" Settings row in `axorc permissions` guidance by updating AXorcist. openclaw/AXorcist#102.
+- Render indented code fences, nested and wrapped list items, and parentheses inside link URLs correctly on the documentation site. Thanks @rudycelekli! #1084, #1085, #1086.
+- Update Service Lifecycle to 2.13.0; Swift 6.2 builds select the same runtime code. #1097.
+
+## 4.9.4 - 2026-10-15
+
+**Highlights:** Keep Peekaboo.app's granted bridge host selected after a command auto-starts an ungranted on-demand daemon, name macOS 27's renamed "Device Control and Data Access" Settings row in permission guidance, explain unsigned source builds such as Homebrew core's `peekaboo` formula in Bridge and daemon trust failures, and reject non-finite coordinates and regions.
+
+- Keep a granted Peekaboo.app bridge host selected when an on-demand daemon started from an ungranted terminal reports missing Accessibility, Event Synthesizing or Screen Recording, instead of downgrading every caller's permissions until the daemon idles out. Thanks @joshua-koehler! #1073.
+- Show macOS 27's renamed "Device Control and Data Access" Settings row for Accessibility and Event Synthesizing, and consistently name "Screen & System Audio Recording", in `peekaboo permissions`, MCP permission tools, and permission errors. Thanks @fry69! #1071.
+- Explain in Bridge and daemon trust failures when the running `peekaboo` is an unsigned source build (such as Homebrew core's `peekaboo` formula) and point to the notarized `openclaw/tap` or npm install. Thanks @fry69! #1064.
+- Reject `nan` and infinite coordinates and regions in `click`, `move`, `capture live`, `capture action`, `see --region` and the MCP `click` tool instead of dispatching a non-finite point or capture rect, and ignore non-finite agent verification target points. Thanks @rudycelekli! #1074, #1075, #1076.
+- Update SwiftNIO to 2.104.0 and Service Lifecycle to 2.12.1, including its Unix signal dispatch-source leak fix, while preserving the Swift 6.2 and macOS baselines.
+
 ## 4.9.3 - 2026-10-14
 
 **Highlights:** Give manual `peekaboo daemon start` the same readiness budget as automatic startup and report the real authentication or probe failure instead of a generic timeout, keep agent tool results readable when they contain backslashes or newlines, and harden the MCP wrapper's fatal-error and restart handling.

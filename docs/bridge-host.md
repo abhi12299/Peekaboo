@@ -23,6 +23,34 @@ and host capabilities on the same executable generation. An explicit Bridge sock
 Operations that permit process-local fallback can use it when no compatible host is available. Application inventory
 and launch prefer the GUI host, while relaunch and quit require a reusable daemon that survives the caller.
 
+During implicit routing, an on-demand daemon that reports missing Screen Recording, Accessibility, or Event
+Synthesizing grants held by the running Peekaboo.app host ranks after that app, unless the daemon also holds a grant
+the app reports missing; unreported permissions keep the existing order. Snapshot-owned actions and lifecycle
+commands requiring a surviving daemon retain their existing routing.
+
+Permission admission follows the parsed command route. Background exact-window keyboard input requires
+Accessibility to pin its receiver; raw `press` chords other than AX-capable Cmd+A additionally require Event
+Synthesizing. Background text typing and explicit text paste use Accessibility by default, but do not require
+Event Synthesizing merely because keyboard fallback is possible. Foreground `type` requires Event Synthesizing;
+targeted foreground setup also requires Accessibility. Foreground hotkeys and paste use Event Synthesizing under
+the default synthesis policy; an explicit AX-first policy can instead use menu shortcuts. Input-policy overrides
+retain their existing local routing.
+
+Window mutations and application-menu traversal/actions require Accessibility. Foreground window close can
+finish through AX before its keyboard fallback, so it does not declare Event Synthesizing. Scoped status-item
+clicks require Accessibility; global status-item names/indices use coordinate delivery and require Event
+Synthesizing. Native app hide/focus, window/status-item inventory, and clipboard-only writes declare neither.
+File paste with an unknown payload leaves its delivery requirement undecided until decoding selects text
+or Cmd+V. Current-clipboard paste always uses Cmd+V and requires Event Synthesizing under the default policy;
+`paste` itself always delivers input, whereas `clipboard set` only writes the clipboard.
+
+For these route-derived declarations, an explicitly denied permission skips that remote candidate; omitted
+permission reports (including legacy reports without Event Synthesizing status) remain unknown. Existing
+click/move/drag/scroll permission flags retain their strict grant checks, and operation-derived requirements
+retain their existing admission rules. When all implicit candidates are rejected,
+commands permitting local execution still attempt the same in-process fallback and retain their own local
+permission errors. Snapshot-owner and explicit-socket routing remain strict.
+
 Commands carrying a concrete snapshot reference do not use this preference order. They resolve the unique producer as
 described in [Snapshot authority](#snapshot-authority) before selecting an execution host.
 
@@ -427,10 +455,12 @@ deliberately omitted from public help and shell completions.
 
 The client does not treat the response-carried, self-signed listener as provenance by itself. It captures the connected
 socket peer's audit token and requires exact PID/PID-version, process-start, live kernel CDHash, Apple-anchored signing
-identity, trusted team membership, and listener-host agreement before installing a 1.29 session. Bundled Peekaboo
-socket paths use the release-team migration allowlist. Custom socket clients must pass `trustedHostTeamIDs`; omitting
-that policy caps the handshake at receiptless protocol 1.28 so an arbitrary same-user Developer ID process cannot
-replace the socket and mint a trusted-looking receipt chain.
+identity, trusted team membership, and listener-host agreement before installing a 1.29 session. The unsigned daemon
+developer opt-in described under [Security](#security) replaces only the signing/team requirement with same-effective-UID
+and own-live-CDHash checks; listener, session, and per-request generation binding still apply. Bundled Peekaboo socket
+paths use the release-team migration allowlist. Custom socket clients must pass `trustedHostTeamIDs` or enable that
+unsigned developer policy; otherwise the handshake is capped at receiptless protocol 1.28 so an arbitrary same-user
+Developer ID process cannot replace the socket and mint a trusted-looking receipt chain.
 
 Each protocol 1.29 request reserves one decimal-string sequence in its logical session and carries a deterministic
 RFC 9562 version-8 request UUID derived from the full `(session ID, sequence)` tuple. Replay protection retains the
@@ -559,6 +589,21 @@ Peekaboo BridgeHost validates callers before processing any request:
 - Rejects any process not signed by an allowlisted TeamID (default: `FWJYW4S8P8`, plus `Y5PE65HELJ` for transition-era CLI compatibility).
 - Peekaboo.app additionally admits only the exact signing identifiers of its CLI, GUI, and source-bound certification controller (`boo.peekaboo.peekaboo-certification-controller`). The controller retains its own matched-build checks; this admission does not grant CLI-only certification, browser-handoff, or Agent operations to other clients.
 
+Unsigned source builds, including Homebrew core's `peekaboo` formula, normally cannot use trusted Bridge or daemon
+hosts; prefer the [notarized tap or npm CLI installs](install.md#homebrew-recommended).
+
+`PEEKABOO_ALLOW_UNSIGNED_DAEMON=1` is an explicit developer exception only for processes that are not release-signed.
+An opted-in unsigned client can authenticate an on-demand daemon only when its live socket peer has the same
+effective UID and exact same live kernel CDHash as itself. An opted-in unsigned daemon applies the same rule to
+clients. Existing audit-token, liveness, process-generation, and receipt bindings remain in force. GUI hosts and
+different binaries still require release signing; release-signed binaries ignore the variable. Every relaxed
+connection is marked `unsigned same-binary developer opt-in` by Bridge/daemon status (JSON `trustMode` is
+`unsignedSameBinaryDeveloperOptIn`), and host admission is logged. This does not claim release-authenticated source
+provenance. See [daemon development](daemon.md#unsigned-developer-builds).
+
+Ad-hoc source builds lack the hardened runtime, so injected code can run under the same binary and share its CDHash.
+Enable only on machines you control; prefer the notarized install.
+
 Debug-only escape hatch:
 
 - Set `PEEKABOO_ALLOW_UNSIGNED_SOCKET_CLIENTS=1` to allow same-UID unsigned clients (local dev only).
@@ -597,6 +642,7 @@ response bytes. Protocol 1.5 desktop observation provides the raster metadata, w
   screen-capture observation, AX-tree inspection, browser, and snapshot-state work first prefers—and may auto-start—the
   current CLI build's build-scoped daemon so an older compatible host does not become the owner of build-sensitive
   in-memory state.
+- Implicit auto-start skips a daemon predicted by the caller's non-interactive permission preflights to be weaker than a capable Peekaboo.app host; concrete snapshot ownership and commands requiring a surviving lifecycle host keep their existing routing.
 - Use `--no-remote` to force local execution.
 - Use `--bridge-socket <path>` or `PEEKABOO_BRIDGE_SOCKET` to override host discovery.
 - Use `PEEKABOO_DAEMON_SOCKET` only to change the auto-start daemon socket without treating it as an explicit Bridge override.

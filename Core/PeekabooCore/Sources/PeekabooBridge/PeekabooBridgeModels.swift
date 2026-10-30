@@ -445,6 +445,8 @@ public enum PeekabooBridgeClientCapability {
 }
 
 public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {
+    /// Computed by the client from the live peer. Never decoded from the host's wire claims.
+    public internal(set) var trustMode: PeekabooBridgeTrustMode?
     public let negotiatedVersion: PeekabooBridgeProtocolVersion
     public let hostKind: PeekabooBridgeHostKind
     public let build: String?
@@ -556,6 +558,7 @@ public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
+        case trustMode
         case negotiatedVersion
         case hostKind
         case build
@@ -597,6 +600,7 @@ public struct PeekabooBridgeHandshakeResponse: Codable, Sendable {
 
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(self.trustMode, forKey: .trustMode)
         try container.encode(self.negotiatedVersion, forKey: .negotiatedVersion)
         try container.encode(self.hostKind, forKey: .hostKind)
         try container.encodeIfPresent(self.build, forKey: .build)
@@ -650,7 +654,7 @@ public struct PeekabooBridgeErrorEnvelope: Codable, Sendable, LocalizedError {
     public internal(set) var isLocalHostAuthenticationFailure = false
     public static let standardizedErrorContextPrefix = "standard_error:"
     public let code: PeekabooBridgeErrorCode
-    public let message: String
+    public internal(set) var message: String
     public let details: String?
     public let permission: PeekabooBridgePermissionKind?
     public let kind: PeekabooBridgeErrorKind?

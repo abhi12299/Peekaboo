@@ -10,7 +10,7 @@ read_when:
 ## Prerequisites
 
 - macOS 15.0+
-- Swift 6.2+ toolchain (Xcode 26.x or newer recommended)
+- Swift 6.2+ toolchain (CI uses Xcode 27.0 and its bundled Swift 6.4 compiler)
 - Python 3.9+ for the checkout-local Swift workspace setup (Xcode provides `python3`).
 - Node.js 22.13+ for the pinned pnpm source helpers (Corepack-enabled) — only needed for pnpm helper scripts; core Swift builds do not require Node.
 - pnpm (`corepack enable pnpm`)
@@ -159,6 +159,11 @@ consumer locks already select 1.6.0; do not advance this constraint until the bu
 macOS runtime baseline. Release runtime verification rejects that strong import in every architecture, including
 reused binaries and extracted archives. Weak imports remain distinct; this does not weak-link the Swift runtime or
 replace system libraries. Successful execution on the build host alone does not prove older-macOS compatibility.
+
+Keep Swift Async Algorithms at 1.1.5 while this constraint remains: 1.1.7 requires Swift Collections 1.7.0.
+The shared consumer locks use SwiftNIO 2.104.0 and Service Lifecycle 2.13.0. The latter retains the Unix signal
+dispatch-source leak fix and now declares the same Swift 6.2 minimum as Peekaboo. Its older-compiler compatibility
+cleanup preserves the locking code selected on supported Swift toolchains.
 
 Runtime verification also audits every strong `libswift*` import per architecture by parsing the
 installed SDK's Swift `.tbd` files at verification time, following re-exports transitively. Weak imports

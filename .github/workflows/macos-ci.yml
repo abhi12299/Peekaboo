@@ -16,7 +16,7 @@ concurrency:
 jobs:
   peekaboo-core:
     name: PeekabooCore build & tests
-    runs-on: macos-26
+    runs-on: xcode-27
     env:
       PEEKABOO_INCLUDE_AUTOMATION_TESTS: "false"
       RUN_AUTOMATION_TESTS: "false"
@@ -29,7 +29,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "26.9.0"
+          node-version: "26.12.1"
 
       - name: Configure checkout-local Swift workspace
         run: python3 scripts/setup-swift-workspace.py setup
@@ -68,16 +68,12 @@ jobs:
       - name: Verify log helper contracts
         run: pnpm run test:log-scripts
 
-      - name: Select Xcode 26.6 (if present) or fallback to default
+      - name: Select Xcode 27
         run: |
           set -euo pipefail
-          for candidate in /Applications/Xcode_26.6.app /Applications/Xcode_26.5.app /Applications/Xcode_26.4.1.app /Applications/Xcode_26.3.app /Applications/Xcode_26.2.app /Applications/Xcode.app; do
-            if [[ -d "$candidate" ]]; then
-              sudo xcode-select -s "$candidate"
-              echo "DEVELOPER_DIR=${candidate}/Contents/Developer" >> "$GITHUB_ENV"
-              break
-            fi
-          done
+          export DEVELOPER_DIR=/Applications/Xcode_27.app/Contents/Developer
+          test -d "$DEVELOPER_DIR"
+          echo "DEVELOPER_DIR=$DEVELOPER_DIR" >> "$GITHUB_ENV"
           /usr/bin/xcodebuild -version
 
       - name: Verify Swift runtime-library contracts
@@ -458,11 +454,13 @@ jobs:
           set -o pipefail
           test_log="$RUNNER_TEMP/dialog-metadata-contracts.log"
           swift test --no-parallel \
-            --filter 'DialogMetadataReaderTests|DialogMetadataContractTests|DialogHierarchyReaderTests|DialogHierarchyAttributeTests|DialogOperationDeadlineTests|ElementDetectionDetachedRunnerTests' \
+            --filter 'DialogMetadataReaderTests|DialogMetadataContractTests|DialogHierarchyReaderTests|DialogHierarchyAttributeTests|DialogOperationDeadlineTests|ElementDetectionDetachedRunnerTests|DetachedAXObservationWorkerTests|AXDescriptorReaderPolicyTests' \
             2>&1 | tee "$test_log"
           grep -Fq "Test Suite 'DialogMetadataReaderTests' passed" "$test_log"
           grep -Fq 'Suite DialogMetadataContractTests passed after ' "$test_log"
           grep -Fq 'Suite DialogOperationDeadlineTests passed after ' "$test_log"
+          grep -Fq 'Suite DetachedAXObservationWorkerTests passed after ' "$test_log"
+          grep -Fq 'Suite AXDescriptorReaderPolicyTests passed after ' "$test_log"
           grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
 
       - name: Run agent-surface contract tests
@@ -477,7 +475,7 @@ jobs:
 
   peekaboo-cli:
     name: Peekaboo CLI build & tests
-    runs-on: macos-26
+    runs-on: xcode-27
     env:
       PEEKABOO_INCLUDE_AUTOMATION_TESTS: "false"
       PEEKABOO_SKIP_AUTOMATION: "1"
@@ -490,16 +488,12 @@ jobs:
       - name: Configure checkout-local Swift workspace
         run: python3 scripts/setup-swift-workspace.py setup
 
-      - name: Select Xcode 26.6 (if present) or fallback to default
+      - name: Select Xcode 27
         run: |
           set -euo pipefail
-          for candidate in /Applications/Xcode_26.6.app /Applications/Xcode_26.5.app /Applications/Xcode_26.4.1.app /Applications/Xcode_26.3.app /Applications/Xcode_26.2.app /Applications/Xcode.app; do
-            if [[ -d "$candidate" ]]; then
-              sudo xcode-select -s "$candidate"
-              echo "DEVELOPER_DIR=${candidate}/Contents/Developer" >> "$GITHUB_ENV"
-              break
-            fi
-          done
+          export DEVELOPER_DIR=/Applications/Xcode_27.app/Contents/Developer
+          test -d "$DEVELOPER_DIR"
+          echo "DEVELOPER_DIR=$DEVELOPER_DIR" >> "$GITHUB_ENV"
           /usr/bin/xcodebuild -version
 
       - name: Compute SwiftPM cache key (CLI)
@@ -615,12 +609,13 @@ jobs:
           set -o pipefail
           test_log="$RUNNER_TEMP/interaction-receipt-contracts.log"
           swift test --disable-xctest --enable-swift-testing --no-parallel \
-            --filter '^CLIAutomationTests[.](PressCommandTests|ClickCommandTests|ClickCommandActionResultTests|ClickSnapshotWindowSelectionTests|SelectTextCommandTests)/' 2>&1 | tee "$test_log"
+            --filter '^CLIAutomationTests[.](PressCommandTests|ClickCommandTests|ClickCommandActionResultTests|ClickSnapshotWindowSelectionTests|SelectTextCommandTests|DialogCommandTests)/' 2>&1 | tee "$test_log"
           grep -Fq 'Suite PressCommandTests passed after ' "$test_log"
           grep -Fq 'Suite ClickCommandTests passed after ' "$test_log"
           grep -Fq 'Suite ClickCommandActionResultTests passed after ' "$test_log"
           grep -Fq 'Suite ClickSnapshotWindowSelectionTests passed after ' "$test_log"
           grep -Fq 'Suite SelectTextCommandTests passed after ' "$test_log"
+          grep -Fq 'Suite DialogCommandTests passed after ' "$test_log"
           grep -Eq 'Test run with [1-9][0-9]* tests?( in [0-9]+ suites?)? passed after ' "$test_log"
 
           scroll_log="$RUNNER_TEMP/background-coordinate-scroll-cli.log"
@@ -699,7 +694,7 @@ jobs:
 
   tachikoma:
     name: Tachikoma build & tests
-    runs-on: macos-26
+    runs-on: xcode-27
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -707,16 +702,12 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Select Xcode 26.6 (if present) or fallback to default
+      - name: Select Xcode 27
         run: |
           set -euo pipefail
-          for candidate in /Applications/Xcode_26.6.app /Applications/Xcode_26.5.app /Applications/Xcode_26.4.1.app /Applications/Xcode_26.3.app /Applications/Xcode_26.2.app /Applications/Xcode.app; do
-            if [[ -d "$candidate" ]]; then
-              sudo xcode-select -s "$candidate"
-              echo "DEVELOPER_DIR=${candidate}/Contents/Developer" >> "$GITHUB_ENV"
-              break
-            fi
-          done
+          export DEVELOPER_DIR=/Applications/Xcode_27.app/Contents/Developer
+          test -d "$DEVELOPER_DIR"
+          echo "DEVELOPER_DIR=$DEVELOPER_DIR" >> "$GITHUB_ENV"
           /usr/bin/xcodebuild -version
 
       - name: Remove phantom submodule metadata
@@ -802,7 +793,7 @@ jobs:
 
   mac-apps:
     name: Build macOS apps (Peekaboo + Inspector)
-    runs-on: macos-26
+    runs-on: xcode-27
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -812,16 +803,12 @@ jobs:
       - name: Configure checkout-local Swift workspace
         run: python3 scripts/setup-swift-workspace.py setup
 
-      - name: Select Xcode 26.6 (if present) or fallback to default
+      - name: Select Xcode 27
         run: |
           set -euo pipefail
-          for candidate in /Applications/Xcode_26.6.app /Applications/Xcode_26.5.app /Applications/Xcode_26.4.1.app /Applications/Xcode_26.3.app /Applications/Xcode_26.2.app /Applications/Xcode.app; do
-            if [[ -d "$candidate" ]]; then
-              sudo xcode-select -s "$candidate"
-              echo "DEVELOPER_DIR=${candidate}/Contents/Developer" >> "$GITHUB_ENV"
-              break
-            fi
-          done
+          export DEVELOPER_DIR=/Applications/Xcode_27.app/Contents/Developer
+          test -d "$DEVELOPER_DIR"
+          echo "DEVELOPER_DIR=$DEVELOPER_DIR" >> "$GITHUB_ENV"
           /usr/bin/xcodebuild -version
 
       - name: Run Mac package tests (secretless hosted runner only)
@@ -889,7 +876,7 @@ jobs:
 
   lint:
     name: SwiftLint (core + CLI)
-    runs-on: macos-26
+    runs-on: xcode-27
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -901,7 +888,7 @@ jobs:
 
   format:
     name: SwiftFormat
-    runs-on: macos-26
+    runs-on: xcode-27
     env:
       # Keep in sync with the SwiftFormat version used locally; rule output changes between releases.
       SWIFTFORMAT_VERSION: "0.63.1"
@@ -911,7 +898,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: "26.9.0"
+          node-version: "26.12.1"
 
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
 
