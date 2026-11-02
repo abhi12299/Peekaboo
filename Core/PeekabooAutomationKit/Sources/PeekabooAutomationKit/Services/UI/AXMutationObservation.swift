@@ -31,6 +31,8 @@ struct AXMutationObservationSnapshot: Sendable {
     let identity: FocusedElementIdentity
     let focused: Bool?
     let value: ElementValueReadback?
+    /// AXValue when it is a CFDate (date pickers), which has no scalar readback.
+    let dateValue: Date?
     let legacyPresentation: String?
     let selected: Bool?
     let selectedTextRange: TextSelectionRange?
@@ -39,6 +41,7 @@ struct AXMutationObservationSnapshot: Sendable {
         identity: FocusedElementIdentity,
         focused: Bool? = nil,
         value: ElementValueReadback? = nil,
+        dateValue: Date? = nil,
         legacyPresentation: String? = nil,
         selected: Bool? = nil,
         selectedTextRange: TextSelectionRange? = nil)
@@ -46,6 +49,7 @@ struct AXMutationObservationSnapshot: Sendable {
         self.identity = identity
         self.focused = focused
         self.value = value
+        self.dateValue = dateValue
         self.legacyPresentation = legacyPresentation
         self.selected = selected
         self.selectedTextRange = selectedTextRange

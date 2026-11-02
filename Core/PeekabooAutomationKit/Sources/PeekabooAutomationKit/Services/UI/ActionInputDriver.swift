@@ -670,6 +670,13 @@ struct ActionInputDriver: ActionInputDriving {
             }
 
             let valueBefore = element.value
+            if let dateBefore = valueBefore as? Date {
+                return try await self.setDateValue(
+                    ElementDateValue(value),
+                    on: element,
+                    current: dateBefore,
+                    beforeMutation: beforeMutation)
+            }
             let readbackBefore = ElementValueReadback(nativeValue: valueBefore)
             guard !(valueBefore is NSNumber) || readbackBefore != nil else {
                 throw ActionInputError.failed("Native accessibility integer is outside the supported Int range")
@@ -739,6 +746,56 @@ struct ActionInputDriver: ActionInputDriving {
         } catch {
             throw Self.classify(error)
         }
+    }
+
+    /// Date pickers expose AXValue as a CFDate: write a date, then verify the readback at the requested precision.
+    private func setDateValue(
+        _ requested: ElementDateValue,
+        on element: any AutomationElementRepresenting,
+        current: Date,
+        beforeMutation: @MainActor () throws -> Void) async throws -> UIInputExecutionResult.Action
+    {
+        let verification = { (date: Date) in
+            ElementValueVerification(
+                attribute: .value,
+                resolvedKind: .string,
+                readback: .string(requested.describe(date)))
+        }
+        if requested.matches(current) {
+            return UIInputExecutionResult.Action(
+                outcome: .confirmedNoChange(),
+                actionName: AXActionNames.kAXSetValueAction,
+                anchorPoint: element.anchorPoint,
+                elementRole: element.role,
+                valueVerification: verification(current))
+        }
+        let observationTarget = try await self.observationTarget(element)
+        try Self.validateBeforeMutation(beforeMutation)
+        try element.setAutomationDateValue(requested.resolved(keepingTimeOf: current))
+        var dateAfter: Date?
+        var observedIdentity: FocusedElementIdentity?
+        guard await self.observeMutation(
+            on: element,
+            target: observationTarget,
+            attribute: .value,
+            matches: { sample in
+                if let sample {
+                    observedIdentity = sample.identity
+                    dateAfter = sample.dateValue
+                } else {
+                    dateAfter = element.value as? Date
+                }
+                return dateAfter.map(requested.matches) ?? false
+            }), let dateAfter
+        else {
+            throw Self.unverifiedValueMutationFailure(attribute: AXActionNames.kAXSetValueAction)
+        }
+        return UIInputExecutionResult.Action(
+            outcome: Self.dispatchedValueMutationOutcome(preStateKnown: true),
+            actionName: AXActionNames.kAXSetValueAction,
+            anchorPoint: observedIdentity.map { CGPoint(x: $0.frame.midX, y: $0.frame.midY) } ?? element.anchorPoint,
+            elementRole: observedIdentity?.role ?? element.role,
+            valueVerification: verification(dateAfter))
     }
 
     func performObservedMutation(

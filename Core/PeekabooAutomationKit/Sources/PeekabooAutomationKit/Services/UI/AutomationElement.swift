@@ -50,6 +50,8 @@ protocol AutomationElementRepresenting: Sendable {
 
     func performAutomationAction(_ actionName: String) throws
     func setAutomationValue(_ value: UIElementValue) throws
+    /// Writes a CFDate to AXValue (date pickers); a string would be rejected as an illegal argument.
+    func setAutomationDateValue(_ date: Date) throws
     func setAutomationFocused(_ focused: Bool) throws
     func setAutomationSelected(_ selected: Bool) throws
     func setAutomationTextSelection(_ range: TextSelectionRange) throws -> Bool
@@ -59,6 +61,10 @@ protocol AutomationElementRepresenting: Sendable {
 }
 
 extension AutomationElementRepresenting {
+    func setAutomationDateValue(_: Date) throws {
+        throw AccessibilitySystemError(.attributeUnsupported)
+    }
+
     var automationOwnedScrollBars: [any AutomationElementRepresenting] {
         []
     }
@@ -329,6 +335,17 @@ struct AutomationElement: AutomationElementRepresenting {
             self.element.underlyingElement,
             AXAttributeNames.kAXValueAttribute as CFString,
             value.accessibilityValue as CFTypeRef)
+        guard error == .success else {
+            throw AccessibilitySystemError(error)
+        }
+    }
+
+    @MainActor
+    func setAutomationDateValue(_ date: Date) throws {
+        let error = AXUIElementSetAttributeValue(
+            self.element.underlyingElement,
+            AXAttributeNames.kAXValueAttribute as CFString,
+            date as CFDate)
         guard error == .success else {
             throw AccessibilitySystemError(error)
         }
