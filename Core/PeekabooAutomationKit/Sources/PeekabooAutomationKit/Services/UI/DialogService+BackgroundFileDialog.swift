@@ -59,7 +59,7 @@ extension DialogService {
         }
         var verified = report.openedPath != nil
         if let expectedPath = report.savedPath {
-            guard let savedPath = await Self.waitForSavedFile(expectedPath, notBefore: startedAt) else {
+            guard let match = await Self.waitForSavedFile(expectedPath, notBefore: startedAt) else {
                 throw DesktopActionFailure.indeterminate(
                     delivery: Self.backgroundFileDialogDelivery,
                     evidence: .completionUnknown,
@@ -68,9 +68,9 @@ extension DialogService {
                     hint: "Check where the app saved the file before retrying.")
                     .attributed(to: target.actionTargetReceipt)
             }
-            details["saved_path"] = savedPath
-            details["saved_path_verified"] = "true"
-            verified = true
+            details["saved_path"] = match.path
+            details["saved_path_verified"] = match.exact ? "true" : "false"
+            verified = match.exact
         } else if report.openedPath == nil {
             // The panel closed, but its folder could not be mapped to a path, so the save can't be checked on disk.
             details["saved_path_verified"] = "false"
@@ -149,13 +149,19 @@ extension DialogService {
         return failure.attributed(to: target.actionTargetReceipt)
     }
 
-    /// Waits for the saved file and returns its path. Save panels may hide the extension in the name field, so
-    /// when the name has no extension of its own, one file named `<name>.<extension>` written during the run also
-    /// counts. A name with an extension must match exactly (never `report.txt.bak` for `report.txt`).
+    struct SavedFileMatch: Equatable {
+        let path: String
+        /// False when only `<name>.<extension>` appeared: the panel may hide the extension, but a fresh file with
+        /// the same stem is not proof it is the saved document, so such a match is reported unverified.
+        let exact: Bool
+    }
+
+    /// Waits for the saved file. A name with an extension must match exactly (never `report.txt.bak` for
+    /// `report.txt`); for a name without one, a single fresh `<name>.<extension>` is returned as a non-exact match.
     static func waitForSavedFile(
         _ path: String,
         notBefore startedAt: Date,
-        timeout: Duration = .seconds(3)) async -> String?
+        timeout: Duration = .seconds(3)) async -> SavedFileMatch?
     {
         let directory = (path as NSString).deletingLastPathComponent
         let name = (path as NSString).lastPathComponent
@@ -166,9 +172,10 @@ extension DialogService {
             return modified >= startedAt.addingTimeInterval(-2)
         }
         let mayAddExtension = (name as NSString).pathExtension.isEmpty
+        var candidate: String?
         let attempts = max(1, Int(timeout / .milliseconds(50)))
         for _ in 0..<attempts {
-            if isFresh(path) { return path }
+            if isFresh(path) { return SavedFileMatch(path: path, exact: true) }
             guard mayAddExtension else {
                 try? await Task.sleep(for: .milliseconds(50))
                 continue
@@ -178,9 +185,9 @@ extension DialogService {
                 .filter { $0.hasPrefix(name + ".") && !($0.dropFirst(name.count + 1)).contains(".") }
                 .map { (directory as NSString).appendingPathComponent($0) }
                 .filter(isFresh)
-            if withExtension.count == 1 { return withExtension[0] }
+            if withExtension.count == 1 { candidate = withExtension[0] }
             try? await Task.sleep(for: .milliseconds(50))
         }
-        return nil
+        return candidate.map { SavedFileMatch(path: $0, exact: false) }
     }
 }

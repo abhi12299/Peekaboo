@@ -129,6 +129,11 @@ struct DialogFileExecutionOwnerTests {
             timeout: .milliseconds(200))
 
         #expect(found == nil)
+        let tmpOnly = await DialogService.waitForSavedFile(
+            tree.url("out").appendingPathComponent("report.txt").path,
+            notBefore: startedAt,
+            timeout: .milliseconds(100))
+        #expect(tmpOnly == nil)
     }
 
     @Test
@@ -141,9 +146,12 @@ struct DialogFileExecutionOwnerTests {
 
         let found = await DialogService.waitForSavedFile(
             tree.url("out").appendingPathComponent("report").path,
-            notBefore: startedAt)
+            notBefore: startedAt,
+            timeout: .milliseconds(200))
 
-        #expect(found == written.path)
+        // Found by an added extension: reported, but not counted as verified.
+        #expect(found?.path == written.path)
+        #expect(found?.exact == false)
     }
 
     @Test
