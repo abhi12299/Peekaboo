@@ -2,7 +2,9 @@ import AppKit
 import ApplicationServices
 import AXorcist
 import Foundation
+import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
+import PeekabooFoundationTestSupport
 import Testing
 @testable import PeekabooAutomationKit
 
@@ -227,5 +229,48 @@ struct AXMutationDateReadbackTests {
 
         #expect(observed?.dateValue == written)
         #expect(observed?.value == nil)
+    }
+}
+
+/// `set_value` on an element whose value cannot be set writes nothing, so it must refuse before dispatch and leave the
+/// snapshot usable (the benchmark model tried it on a pop-up button and then had to observe again).
+@MainActor
+struct SetValueUnsupportedRefusalTests {
+    @Test(arguments: [ActionInputUnsupportedReason.valueNotSettable, .attributeUnsupported, .secureValueNotAllowed])
+    func `a value that cannot be set is refused before dispatch`(reason: ActionInputUnsupportedReason) async throws {
+        let snapshotID = SnapshotReferenceFixtures.first.rawValue
+        let processStartIdentity = try #require(SystemIdentityResolver.processStartIdentity(getpid()))
+        let detected = DetectedElement(
+            id: "B1",
+            type: .button,
+            label: "Europe",
+            bounds: CGRect(x: 10, y: 10, width: 80, height: 24))
+        let detectionResult = ElementDetectionResult(
+            snapshotId: snapshotID,
+            screenshotPath: "/tmp/shot.png",
+            elements: DetectedElements(buttons: [detected]),
+            metadata: DetectionMetadata(
+                detectionTime: 0.01,
+                elementCount: 1,
+                method: "test",
+                windowContext: WindowContext(
+                    applicationProcessId: getpid(),
+                    applicationProcessStartIdentity: processStartIdentity)))
+        let service = try await UIAutomationService(
+            snapshotManager: InMemorySnapshotManager.containing(detectionResult),
+            inputPolicy: UIInputPolicy(defaultStrategy: .actionOnly),
+            actionInputDriver: RecordingActionInputDriver(elementActionError: .unsupported(reason)),
+            automationElementResolver: FixedActionAutomationElementResolver(),
+            processStartIdentityProvider: { _ in processStartIdentity })
+
+        let failure = await #expect(throws: DesktopActionFailure.self) {
+            _ = try await service.setValue(target: "B1", value: .string("Asia"), snapshotId: snapshotID)
+        }
+
+        #expect(failure?.outcome.state == .refused)
+        #expect(failure?.outcome.dispatchState == DesktopActionOutcome.DispatchState.none)
+        #expect(failure?.outcome.refusalReason == .operationUnsupported)
+        #expect(failure?.message.contains("Cannot set value on B1") == true)
+        #expect(failure?.hint?.contains("pop-up") == true)
     }
 }
