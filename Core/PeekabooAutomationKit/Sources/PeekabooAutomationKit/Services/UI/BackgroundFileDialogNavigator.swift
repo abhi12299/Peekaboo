@@ -93,12 +93,14 @@ public struct BackgroundFileDialogNavigator {
 
     public func run(_ destination: FileDialogDestination) async throws -> BackgroundFileDialogReport {
         var steps: [String] = []
+        // Plan before changing anything: a folder the panel can't reach is refused with the panel untouched.
+        let plan = try destination.directory.map { try self.plan(to: $0) }
         if let filename = destination.filename {
             try self.panel.setFilename(filename)
             steps.append("name")
         }
-        if let directory = destination.directory {
-            try await self.navigate(to: directory, steps: &steps)
+        if let plan, let directory = destination.directory {
+            try await self.navigate(plan, steps: &steps)
             try self.requireCurrentFolder(directory)
         }
         if let filename = destination.filename {
@@ -128,7 +130,16 @@ public struct BackgroundFileDialogNavigator {
 
     // MARK: - Navigation
 
-    private func navigate(to directory: URL, steps: inout [String]) async throws {
+    private struct Plan {
+        let chain: [URL]
+        let names: [String]
+        /// Index of the Where-menu location to choose, or nil when the panel is already on the way down.
+        let menuIndex: Int?
+        let shared: Int
+    }
+
+    /// Reads the Where menu (leaving it open when a location must be chosen) and works out the moves.
+    private func plan(to directory: URL) throws -> Plan {
         let chain = Self.folderChain(to: directory)
         let names = chain.map(Self.displayName)
         let titles = try self.panel.openLocationMenu()
@@ -137,19 +148,34 @@ public struct BackgroundFileDialogNavigator {
             throw self.failure(
                 .folderUnreachable,
                 "The panel's Where menu does not list the volume '\(names[0])' that holds \(directory.path).",
-                changed: !steps.isEmpty)
+                changed: false)
         }
         let currentNames = Array(titles[0...volumeIndex].reversed())
         let shared = zip(currentNames, names).prefix { $0 == $1 }.count
+        if let hidden = chain[shared...].first(where: Self.isHidden) {
+            try self.panel.cancelLocationMenu()
+            throw self.failure(
+                .folderUnreachable,
+                "\(directory.path) is inside the hidden folder \(hidden.path), which Open and Save panels don't " +
+                    "list. Choose a folder outside it; nothing was changed.",
+                changed: false)
+        }
         if shared == currentNames.count {
             try self.panel.cancelLocationMenu()
-        } else {
-            try self.panel.chooseLocationMenuItem(at: volumeIndex - (shared - 1))
-            try await self.waitUntil { try self.panel.currentFolderName() == names[shared - 1] }
-            try self.requireCurrentFolder(chain[shared - 1])
-            steps.append("where:\(names[shared - 1])")
+            return Plan(chain: chain, names: names, menuIndex: nil, shared: shared)
         }
-        for folder in chain[shared...] {
+        return Plan(chain: chain, names: names, menuIndex: volumeIndex - (shared - 1), shared: shared)
+    }
+
+    private func navigate(_ plan: Plan, steps: inout [String]) async throws {
+        if let menuIndex = plan.menuIndex {
+            try self.panel.chooseLocationMenuItem(at: menuIndex)
+            let name = plan.names[plan.shared - 1]
+            try await self.waitUntil { try self.panel.currentFolderName() == name }
+            try self.requireCurrentFolder(plan.chain[plan.shared - 1])
+            steps.append("where:\(name)")
+        }
+        for folder in plan.chain[plan.shared...] {
             try await self.open(folder, steps: &steps)
         }
     }
@@ -225,6 +251,11 @@ public struct BackgroundFileDialogNavigator {
             chain.append(url)
         }
         return chain
+    }
+
+    static func isHidden(_ url: URL) -> Bool {
+        url.lastPathComponent.hasPrefix(".") ||
+            (try? url.resourceValues(forKeys: [.isHiddenKey]))?.isHidden == true
     }
 
     static func displayName(_ url: URL) -> String {

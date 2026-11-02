@@ -157,4 +157,25 @@ struct BackgroundFileDialogNavigatorTests {
 
         #expect(report.savedPath == tree.url("run/exports").appendingPathComponent("q3.txt").path)
     }
+
+    @Test
+    func `a destination inside a hidden folder is refused before the panel changes`() async throws {
+        // Open and Save panels do not list hidden folders such as /private or dot-folders, so they can't be
+        // opened from the file list.
+        let tree = try TemporaryFolderTree(["a/start", "b/.hidden/target"])
+        defer { tree.remove() }
+        let panel = FakeSavePanel(directory: tree.url("a/start"), mode: .icon)
+
+        do {
+            _ = try await BackgroundFileDialogNavigator(panel: panel).run(
+                FileDialogDestination(directory: tree.url("b/.hidden/target"), filename: "q3.txt"))
+            Issue.record("expected a refusal")
+        } catch let error as BackgroundFileDialogError {
+            #expect(error.kind == .folderUnreachable)
+            #expect(!error.changedPanel)
+            #expect(error.message.contains(".hidden"))
+        }
+        #expect(!panel.events.contains { $0.hasPrefix("menu.choose") || $0.hasPrefix("name") })
+        #expect(panel.directory.path == tree.url("a/start").path)
+    }
 }
