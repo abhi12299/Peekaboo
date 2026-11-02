@@ -394,6 +394,12 @@ public final class DesktopObservationService: DesktopObservationActionResultProv
         OffSpaceCapturePolicy.liveWarning(processIdentifier: pid, windowID: windowID)
     }
 
+    /// Names a window capture whose pixels are likely older than its accessibility tree: a Chromium-based
+    /// window covered completely by other windows stops repainting.
+    var coveredWindowCaptureWarning: @MainActor (pid_t, CGWindowID) -> String? = { pid, windowID in
+        CoveredWindowCapturePolicy.liveWarning(processIdentifier: pid, windowID: windowID)
+    }
+
     /// Waits before the one retry of a passive observation whose accessibility read came back incomplete.
     var incompleteAccessibilityRetryPause: @MainActor (Duration) async -> Void = { duration in
         try? await Task.sleep(for: duration)
@@ -599,6 +605,9 @@ public final class DesktopObservationService: DesktopObservationActionResultProv
             var warnings = roiResult.capture.warning.map { [$0] } ?? []
             if let offSpaceWarning = self.offSpaceWindowWarning(for: roiResult.capture) {
                 warnings.append(offSpaceWarning)
+            }
+            if let windowWarning = self.coveredWindowWarning(for: roiResult.capture) {
+                warnings.append(windowWarning)
             }
             warnings.append(contentsOf: roiResult.ocr?.warnings ?? [])
             warnings.append(contentsOf: roiResult.elements?.metadata.warnings ?? [])

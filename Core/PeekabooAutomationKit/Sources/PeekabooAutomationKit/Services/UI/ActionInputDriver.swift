@@ -93,6 +93,10 @@ protocol ActionInputDriving: Sendable {
         value: UIElementValue,
         beforeMutation: @MainActor () throws -> Void) async throws -> UIInputExecutionResult.Action
     func tryPerformAction(element: AutomationElement, actionName: String) throws -> UIInputExecutionResult.Action
+    /// Scrolls the target's own scroll container until the target intersects `visibleBounds`.
+    func tryScrollIntoView(
+        element: AutomationElement,
+        visibleBounds: CGRect) async throws -> UIInputExecutionResult.Action
     func trySelectText(
         element: AutomationElement,
         request: TextSelectionRequest,
@@ -101,6 +105,13 @@ protocol ActionInputDriving: Sendable {
 }
 
 extension ActionInputDriving {
+    func tryScrollIntoView(
+        element _: AutomationElement,
+        visibleBounds _: CGRect) async throws -> UIInputExecutionResult.Action
+    {
+        throw ActionInputError.unsupported(.actionUnsupported)
+    }
+
     func trySelectText(
         element: AutomationElement,
         request: TextSelectionRequest,
@@ -248,6 +259,58 @@ struct ActionInputDriver: ActionInputDriving {
         try self.performScrollActions(
             element: element, direction: direction, pages: pages, scrollBarScope: scrollBarScope)
     }
+
+    /// Chromium web content exposes no AX scroll bars or page actions, but every web element supports
+    /// AXScrollToVisible. The renderer applies the scroll asynchronously, so the target's frame is
+    /// sampled until it enters the visible bounds.
+    func tryScrollIntoView(
+        element: AutomationElement,
+        visibleBounds: CGRect) async throws -> UIInputExecutionResult.Action
+    {
+        try await self.scrollIntoView(element, visibleBounds: visibleBounds)
+    }
+
+    private func scrollIntoView(
+        _ element: any AutomationElementRepresenting,
+        visibleBounds: CGRect) async throws -> UIInputExecutionResult.Action
+    {
+        let dispatched = try self.performAction(Self.scrollToVisibleAction, on: element)
+        for sample in 0..<Self.scrollIntoViewSamples {
+            if sample == Self.scrollIntoViewFlushSample {
+                // A fully covered Chrome window stops rendering frames: it applies the scroll but reports
+                // the new geometry only when the next AX action flushes it. Repeating the same
+                // AXScrollToVisible is idempotent once the target is visible, so it serves as that flush.
+                _ = try? self.performAction(Self.scrollToVisibleAction, on: element)
+            }
+            // Fully inside, not merely intersecting: a target that was already partly visible must
+            // show the requested reveal, and AXScrollToVisible scrolls a target that fits until it fits.
+            if let frame = element.frame, visibleBounds.insetBy(dx: -1, dy: -1).contains(frame) {
+                return UIInputExecutionResult.Action(
+                    outcome: .confirmedChange(delivery: Self.accessibilityActionDelivery, unitCount: .one),
+                    actionName: Self.scrollToVisibleAction,
+                    anchorPoint: element.anchorPoint,
+                    elementRole: dispatched.elementRole)
+            }
+            guard sample < Self.scrollIntoViewSamples - 1 else { break }
+            do {
+                try await self.observationDelay()
+            } catch {
+                break
+            }
+        }
+        throw DesktopActionFailure.indeterminate(
+            delivery: Self.accessibilityActionDelivery,
+            evidence: .completionUnknown,
+            unitCount: .one,
+            message: "AXScrollToVisible was accepted, but the target did not enter the visible page.",
+            hint: "Observe the window again before deciding whether to retry this scroll.")
+    }
+
+    private static let scrollToVisibleAction = "AXScrollToVisible"
+    /// 25 samples at the default 20 ms observation delay: about half a second.
+    private static let scrollIntoViewSamples = 25
+    /// About 100 ms in: long enough for a rendering window to report the scroll on its own.
+    private static let scrollIntoViewFlushSample = 5
 
     func trySetText(
         element: AutomationElement,
@@ -1503,6 +1566,13 @@ extension ActionInputDriver {
         .Action
     {
         try await self.setValue(value, on: element, beforeMutation: beforeMutation)
+    }
+
+    func tryScrollIntoViewForTesting(
+        element: any AutomationElementRepresenting,
+        visibleBounds: CGRect) async throws -> UIInputExecutionResult.Action
+    {
+        try await self.scrollIntoView(element, visibleBounds: visibleBounds)
     }
 
     func tryScrollForTesting(

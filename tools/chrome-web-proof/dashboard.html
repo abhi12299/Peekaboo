@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><title>Peekaboo Web Proof Dashboard</title>
+<style>
+body { font: 15px -apple-system, sans-serif; margin: 0; }
+header { padding: 16px 24px; background: #234; color: #fff; }
+nav button { font-size: 15px; margin-right: 8px; padding: 6px 14px; }
+section { padding: 16px 24px; }
+.hidden { display: none; }
+.spacer { height: 420px; background: #eef; border: 1px dashed #99a; margin-bottom: 16px; padding: 12px; }
+table { border-collapse: collapse; }
+td, th { border: 1px solid #ccc; padding: 10px 16px; text-align: left; }
+</style></head>
+<body>
+<header><h1>Ops Dashboard</h1>
+<nav role="tablist">
+<button role="tab" id="tab-overview" aria-selected="true" onclick="show('overview')">Overview</button>
+<button role="tab" id="tab-regions" aria-selected="false" onclick="show('regions')">Regions</button>
+</nav></header>
+<section id="overview"><h2>Overview</h2><p>All systems nominal. Switch to the Regions tab for per-region figures.</p></section>
+<section id="regions" class="hidden"><h2>Regions</h2>
+<div class="spacer">Regional summary chart placeholder.</div>
+<table id="region-table"><thead><tr><th>Code</th><th>Region</th><th>Owner</th><th>Revenue</th><th>Incidents</th></tr></thead>
+<tbody>
+<tr><td>R-01</td><td>Northwind</td><td>Bo</td><td>$1,137</td><td>7</td></tr>
+<tr><td>R-02</td><td>Southgate</td><td>Cy</td><td>$1,274</td><td>1</td></tr>
+<tr><td>R-03</td><td>Eastmere</td><td>Di</td><td>$1,411</td><td>8</td></tr>
+<tr><td>R-04</td><td>Westholm</td><td>Ed</td><td>$1,548</td><td>2</td></tr>
+<tr><td>R-05</td><td>Midvale</td><td>Flo</td><td>$1,685</td><td>9</td></tr>
+<tr><td>R-06</td><td>Highcrest</td><td>Ada</td><td>$1,822</td><td>3</td></tr>
+<tr><td>R-07</td><td>Lowmoor</td><td>Bo</td><td>$1,959</td><td>10</td></tr>
+<tr><td>R-08</td><td>Riverton</td><td>Cy</td><td>$2,096</td><td>4</td></tr>
+<tr><td>R-09</td><td>Lakeside</td><td>Di</td><td>$2,233</td><td>11</td></tr>
+<tr><td>R-10</td><td>Stonebridge</td><td>Ed</td><td>$2,370</td><td>5</td></tr>
+<tr><td>R-11</td><td>Ashford</td><td>Flo</td><td>$2,507</td><td>12</td></tr>
+<tr><td>R-12</td><td>Brookfield</td><td>Ada</td><td>$2,644</td><td>6</td></tr>
+<tr><td>R-13</td><td>Cedarvale</td><td>Bo</td><td>$2,781</td><td>0</td></tr>
+<tr><td>R-14</td><td>Dunmore</td><td>Cy</td><td>$2,918</td><td>7</td></tr>
+<tr><td>R-15</td><td>Elmsworth</td><td>Di</td><td>$3,055</td><td>1</td></tr>
+<tr><td>R-16</td><td>Fairhaven</td><td>Ed</td><td>$3,192</td><td>8</td></tr>
+<tr><td>R-17</td><td>Glenrock</td><td>Flo</td><td>$3,329</td><td>2</td></tr>
+<tr><td>R-18</td><td>Hollowell</td><td>Ada</td><td>$3,466</td><td>9</td></tr>
+<tr><td>R-19</td><td>Ironwood</td><td>Bo</td><td>$3,603</td><td>3</td></tr>
+<tr><td>R-20</td><td>Juniper Bay</td><td>Cy</td><td>$3,740</td><td>10</td></tr>
+<tr><td>R-21</td><td>Kestrel Point</td><td>Di</td><td>$3,877</td><td>4</td></tr>
+<tr><td>R-22</td><td>Larkspur</td><td>Ed</td><td>$4,014</td><td>11</td></tr>
+<tr><td>R-23</td><td>Marlowe</td><td>Flo</td><td>$4,151</td><td>5</td></tr>
+<tr><td>R-24</td><td>Quillfield</td><td>Ada</td><td>$4,288</td><td>12</td></tr>
+</tbody></table>
+<p id="footer-note">End of region table.</p>
+</section>
+<script>
+function show(name) {
+  for (const id of ['overview','regions']) {
+    document.getElementById(id).classList.toggle('hidden', id !== name);
+    document.getElementById('tab-' + id).setAttribute('aria-selected', String(id === name));
+  }
+}
+if (location.hash === '#regions') show('regions');
+</script>
+</body></html>

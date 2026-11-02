@@ -2,7 +2,7 @@ import CoreGraphics
 import Foundation
 import MCP
 import PeekabooAutomation
-import PeekabooAutomationKit
+@_spi(Testing) import PeekabooAutomationKit
 import PeekabooCore
 import PeekabooFoundation
 import TachikomaMCP
@@ -117,6 +117,39 @@ struct MCPObservedElementTableTests {
         #expect(summary.contains("Text selection elem_2: UTF-16 location 1, length 2"))
         #expect(!summary.contains("Text selection elem_1"))
         #expect(UIElementSummary(Self.field, mutationTargetingAvailable: false).selected_text_range == nil)
+    }
+
+    /// Chrome reports AXTitle "" on table cells. The see text used to print that empty title and hide
+    /// the cell text resolved into the label, which is how the benchmark saw cells "with no text".
+    @Test
+    @MainActor
+    func `see text names a cell by its label when its title is empty`() {
+        let cell = DetectedElement(
+            id: "elem_184",
+            type: .other,
+            label: "Quillfield",
+            value: "",
+            bounds: CGRect(x: 295, y: 1786, width: 119, height: 39),
+            attributes: ["role": "AXCell", "title": "", "description": ""])
+        let line = SeeElementTextFormatter.describe(DetectedElementSnapshotConverter.convert([cell])[0])
+        #expect(line.hasPrefix("  elem_184 - \"Quillfield\" - at (295, 1786)"))
+    }
+
+    /// Observation warnings reach only `_meta`, which agents usually never see. A stale-capture warning
+    /// changes how the screenshot must be read, so it belongs in the text the agent reads.
+    @Test
+    @MainActor
+    func `see text names a stale capture but not other observation warnings`() async {
+        let summary = await SeeSummaryBuilder(
+            snapshot: UISnapshot(),
+            elements: DetectedElementSnapshotConverter.convert([Self.button]),
+            screenshotPath: "/synthetic/fixture.png",
+            truncationInfo: nil,
+            traversalBudget: nil,
+            selectionSummaries: [],
+            observationWarnings: ["ax_incomplete_read", CoveredWindowCapturePolicy.staleCaptureWarning]).build()
+        #expect(summary.contains(CoveredWindowCapturePolicy.staleCaptureWarning))
+        #expect(!summary.contains("ax_incomplete_read"))
     }
 
     @Test

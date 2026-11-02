@@ -192,6 +192,9 @@ extension SeeCommand {
             )
             print("⚠️  \(remediation)")
         }
+        for warning in StaleCaptureWarnings.select(context.observation?.warnings ?? []) {
+            print("⚠️  \(warning)")
+        }
         let formattedDuration = String(format: "%.2f", context.executionTime)
         print("⏱️  Execution time: \(formattedDuration)s")
 

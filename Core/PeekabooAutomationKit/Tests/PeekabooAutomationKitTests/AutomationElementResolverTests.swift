@@ -347,6 +347,41 @@ struct AutomationElementResolverTests {
         #expect(reader.processIdentifierReads.contains(validLowerScore))
     }
 
+    /// Chrome's ARIA tab buttons list themselves among their own AX children. The walk used to push the
+    /// same node forever and spend its whole budget before reaching the page's table.
+    @Test
+    func `self-listing web tab does not exhaust the walk before a later target`() throws {
+        let app = try #require(NSWorkspace.shared.runningApplications.first { !$0.isTerminated })
+        let root = self.makeElement(31)
+        let tab = self.makeElement(32)
+        let cell = self.makeElement(33)
+        let cellFrame = CGRect(x: 295, y: 1646, width: 119, height: 39)
+        let reader = ResolverTreeReader(
+            descriptors: [
+                tab: self.descriptor(identifier: "tab-regions", frame: CGRect(x: 331, y: 180, width: 87, height: 30),
+                                     role: "AXRadioButton"),
+                cell: self.descriptor(identifier: "", frame: cellFrame, role: "AXCell"),
+            ],
+            children: [root: [tab, cell], tab: [tab]],
+            processIdentifiers: [tab: app.processIdentifier, cell: app.processIdentifier])
+        let resolver = AutomationElementResolver(
+            windowRootResolver: ResolverWindowRootResolver(root: root),
+            treeReader: reader)
+
+        let resolved = resolver.resolve(
+            detectedElement: DetectedElement(
+                id: "elem_198",
+                type: .other,
+                label: "Quillfield",
+                bounds: cellFrame,
+                attributes: ["role": "AXCell"]),
+            windowContext: WindowContext(applicationProcessId: app.processIdentifier, windowID: 42),
+            targetProcessIdentifier: app.processIdentifier)
+
+        #expect(resolved?.element == cell)
+        #expect(reader.descriptorReads.filter { $0 == tab }.count == 1)
+    }
+
     private func detectedElement(identifier: String, frame: CGRect) -> DetectedElement {
         DetectedElement(
             id: "B1",
