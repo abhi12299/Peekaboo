@@ -212,9 +212,26 @@ public final class ScrollService {
                             pages: Self.actionScrollPages(amount: request.amount, strategy: strategy),
                             scrollBarScope: request.point == nil ? .targetDescendants : .explicitOwner)
                     } catch let error as ActionInputError {
-                        guard case .unsupported = error,
-                              let exactWindow = captureReceipt.exactWindow,
-                              let point = Self.windowRoutedWheelPoint(
+                        guard case .unsupported = error, let exactWindow = captureReceipt.exactWindow else {
+                            throw error
+                        }
+                        if request.point == nil,
+                           let detected = preparedDetectedElement,
+                           let visibleBounds = Self.revealVisibleBounds(
+                               for: detected,
+                               direction: request.direction,
+                               in: detectionResult,
+                               windowBounds: exactWindow.bounds)
+                        {
+                            do {
+                                return try await self.actionInputDriver.tryScrollIntoView(
+                                    element: preparedElement,
+                                    visibleBounds: visibleBounds)
+                            } catch let revealError as ActionInputError {
+                                guard case .unsupported = revealError else { throw revealError }
+                            }
+                        }
+                        guard let point = Self.windowRoutedWheelPoint(
                                   request: request,
                                   detectedElement: preparedDetectedElement,
                                   coordinateTarget: preparedCoordinateTarget,
@@ -404,7 +421,9 @@ public final class ScrollService {
         DesktopActionFailure.preDispatchRefusal(
             reason: .operationUnsupported,
             message: "Background scroll has no supported route for the observed target.",
-            hint: "Observe again and select a scrollable control or eligible WebKit content element.",
+            hint: "Observe again and select a scrollable control or eligible WebKit content element. " +
+                "In Chromium web content, target the off-screen element to bring into view, " +
+                "scrolling toward it.",
             causeDescription: error.localizedDescription)
             .attributed(to: target.map { DesktopTargetIdentity(exactWindow: $0).actionTargetReceipt })
     }
@@ -421,6 +440,35 @@ public final class ScrollService {
             throw PeekabooError.snapshotStale(
                 "background scroll snapshot does not match its capture-owned exact-window receipt")
         }
+    }
+
+    /// The visible page bounds when `target` lies beyond them in the scroll direction, else nil.
+    ///
+    /// Chromium clips the AXWebArea frame to the viewport while descendants keep document geometry,
+    /// so the largest web area in the snapshot is the visible page. Without one, the window is used.
+    /// A target larger than the visible page (a whole document group) cannot be revealed by scrolling
+    /// toward it and is left to the other routes.
+    nonisolated static func revealVisibleBounds(
+        for target: DetectedElement,
+        direction: PeekabooFoundation.ScrollDirection,
+        in detectionResult: ElementDetectionResult,
+        windowBounds: CGRect) -> CGRect?
+    {
+        guard !target.isOCRSemanticEvidence, target.bounds.width > 0, target.bounds.height > 0 else { return nil }
+        let webAreas = detectionResult.elements.all.filter {
+            $0.attributes["role"] == "AXWebArea" && $0.bounds.width > 0 && $0.bounds.height > 0
+        }
+        let page = webAreas.max { $0.bounds.width * $0.bounds.height < $1.bounds.width * $1.bounds.height }
+        let visible = page.map { $0.bounds.intersection(windowBounds) } ?? windowBounds
+        guard !visible.isNull, !visible.isEmpty else { return nil }
+        let bounds = target.bounds
+        let liesBeyond = switch direction {
+        case .down: bounds.maxY > visible.maxY && bounds.height <= visible.height
+        case .up: bounds.minY < visible.minY && bounds.height <= visible.height
+        case .right: bounds.maxX > visible.maxX && bounds.width <= visible.width
+        case .left: bounds.minX < visible.minX && bounds.width <= visible.width
+        }
+        return liesBeyond ? visible : nil
     }
 
     nonisolated static func supportsWindowRoutedWheelTarget(

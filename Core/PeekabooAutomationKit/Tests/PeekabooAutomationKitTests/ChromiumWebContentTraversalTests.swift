@@ -2,6 +2,7 @@
 import ApplicationServices
 import CoreGraphics
 import Foundation
+import PeekabooFoundation
 import Testing
 @_spi(Testing) @testable import PeekabooAutomationKit
 
@@ -118,5 +119,70 @@ struct ChromiumWebContentTraversalTests {
             isSelected: nil,
             isFocused: nil,
             placeholder: nil)
+    }
+}
+
+/// AXScrollToVisible is the only AX scroll route Chromium web content offers. The renderer scrolls
+/// asynchronously, so the driver samples the target frame instead of trusting the action's return.
+struct ChromiumScrollIntoViewDriverTests {
+    private static let visiblePage = CGRect(x: 200, y: 180, width: 1000, height: 713)
+
+    @Test @MainActor
+    func `scroll into view confirms once the target frame enters the visible page`() async throws {
+        let cell = ActionInputMockAutomationElement(
+            role: "AXCell",
+            frame: CGRect(x: 225, y: 1646, width: 119, height: 39),
+            actionNames: ["AXShowMenu", "AXScrollToVisible"])
+        let driver = ActionInputDriver(observationDelay: {
+            cell.frame = CGRect(x: 225, y: 840, width: 119, height: 39)
+        })
+
+        let result = try await driver.tryScrollIntoViewForTesting(element: cell, visibleBounds: Self.visiblePage)
+
+        #expect(cell.performedActions == ["AXScrollToVisible"])
+        #expect(result.actionName == "AXScrollToVisible")
+        #expect(result.outcome.state == .confirmedChange)
+        #expect(result.outcome.delivery == .init(mechanism: .accessibilityAction, mode: .background))
+    }
+
+    @Test @MainActor
+    func `scroll into view is indeterminate when the target never enters the visible page`() async {
+        let cell = ActionInputMockAutomationElement(
+            role: "AXCell",
+            frame: CGRect(x: 225, y: 1646, width: 119, height: 39),
+            actionNames: ["AXScrollToVisible"])
+        var samples = 0
+        let driver = ActionInputDriver(observationDelay: { samples += 1 })
+
+        do {
+            _ = try await driver.tryScrollIntoViewForTesting(element: cell, visibleBounds: Self.visiblePage)
+            Issue.record("Expected an indeterminate outcome")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+            #expect(failure.outcome.retrySafety == .unsafe)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+        #expect(cell.performedActions == ["AXScrollToVisible"])
+        #expect(samples > 0)
+    }
+
+    @Test @MainActor
+    func `target without AXScrollToVisible stays unsupported and untouched`() async {
+        let cell = ActionInputMockAutomationElement(
+            role: "AXCell",
+            frame: CGRect(x: 225, y: 1646, width: 119, height: 39),
+            actionNames: ["AXShowMenu"])
+
+        do {
+            _ = try await ActionInputDriver().tryScrollIntoViewForTesting(
+                element: cell, visibleBounds: Self.visiblePage)
+            Issue.record("Expected unsupported")
+        } catch let error as ActionInputError {
+            #expect(error == .unsupported(.actionUnsupported))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+        #expect(cell.attemptedActions.isEmpty)
     }
 }

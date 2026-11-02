@@ -411,6 +411,90 @@ struct ScrollServiceTargetResolutionTests {
         #expect(synthetic.events.isEmpty)
     }
 
+    /// Chromium web content has no AX scroll bars and no wheel route. A target the snapshot places
+    /// beyond the visible page in the requested direction is revealed with AXScrollToVisible instead.
+    @Test(arguments: [
+        (PeekabooFoundation.ScrollDirection.down, CGRect(x: 225, y: 1646, width: 119, height: 39)),
+        (.up, CGRect(x: 225, y: -900, width: 119, height: 39)),
+        (.right, CGRect(x: 1900, y: 300, width: 119, height: 39)),
+        (.left, CGRect(x: -700, y: 300, width: 119, height: 39)),
+    ])
+    @MainActor
+    func `unsupported scroll reveals an off-screen web target in the requested direction`(
+        direction: PeekabooFoundation.ScrollDirection, targetBounds: CGRect) async throws
+    {
+        let webArea = DetectedElement(
+            id: "W1",
+            type: .other,
+            label: "Peekaboo Web Proof Dashboard",
+            bounds: CGRect(x: 0, y: 90, width: 800, height: 510),
+            attributes: ["role": "AXWebArea"])
+        let cell = DetectedElement(
+            id: "S1",
+            type: .other,
+            label: "Quillfield",
+            bounds: targetBounds,
+            attributes: ["role": "AXCell"])
+        let action = ScrollRecordingActionInputDriver(
+            scrollError: ActionInputError.unsupported(.actionUnsupported))
+        let synthetic = ScrollRecordingSyntheticInputDriver()
+        var wheelPosts = 0
+        let service = try await ScrollService(
+            snapshotManager: InMemorySnapshotManager.containing(
+                Self.exactDetectionResult(elements: [webArea, cell])),
+            actionInputDriver: action,
+            syntheticInputDriver: synthetic,
+            automationElementResolver: ScrollFixedAutomationElementResolver(),
+            windowRoutedPointerDriver: Self.countingRoutedDriver { wheelPosts += 1 },
+            backgroundWheelCapability: { _ in false },
+            exactWindowIdentityValidator: { _, _ in true },
+            processStartIdentityProvider: { _ in 11 })
+
+        let result = try await service.scroll(ScrollRequest(
+            direction: direction,
+            amount: 3,
+            target: "S1",
+            snapshotId: Self.snapshotID))
+
+        #expect(result.path == .action)
+        #expect(result.actionName == "AXScrollToVisible")
+        #expect(action.revealCalls == [webArea.bounds])
+        #expect(wheelPosts == 0)
+        #expect(synthetic.events.isEmpty)
+    }
+
+    @Test(arguments: [PeekabooFoundation.ScrollDirection.up, .left, .right])
+    @MainActor
+    func `scroll away from an off-screen web target keeps the unsupported refusal`(
+        direction: PeekabooFoundation.ScrollDirection) async throws
+    {
+        let cell = DetectedElement(
+            id: "S1",
+            type: .other,
+            label: "Quillfield",
+            bounds: CGRect(x: 225, y: 1646, width: 119, height: 39),
+            attributes: ["role": "AXCell"])
+        let action = ScrollRecordingActionInputDriver(
+            scrollError: ActionInputError.unsupported(.actionUnsupported))
+        let service = try await ScrollService(
+            snapshotManager: InMemorySnapshotManager.containing(Self.exactDetectionResult(element: cell)),
+            actionInputDriver: action,
+            automationElementResolver: ScrollFixedAutomationElementResolver(),
+            backgroundWheelCapability: { _ in false },
+            exactWindowIdentityValidator: { _, _ in true },
+            processStartIdentityProvider: { _ in 11 })
+
+        do {
+            _ = try await service.scroll(ScrollRequest(
+                direction: direction, amount: 1, target: "S1", snapshotId: Self.snapshotID))
+            Issue.record("Expected an unsupported background route refusal")
+        } catch let error as DesktopActionFailure {
+            #expect(error.outcome.refusalReason == .operationUnsupported)
+            #expect(error.outcome.dispatchState == .none)
+        }
+        #expect(action.revealCalls.isEmpty)
+    }
+
     @Test(arguments: ["AXGroup", "AXWebArea", "AXScrollArea"])
     func `window-routed wheel requires pixel-backed container evidence`(role: String) {
         let element = DetectedElement(
@@ -1013,6 +1097,34 @@ extension ScrollServiceTargetResolutionTests {
             bounds: CGRect(x: 20, y: 30, width: 300, height: 400))
     }
 
+    private static func exactDetectionResult(elements: [DetectedElement]) -> ElementDetectionResult {
+        let single = self.exactDetectionResult(element: elements[0])
+        return ElementDetectionResult(
+            snapshotId: single.snapshotId,
+            screenshotPath: single.screenshotPath,
+            elements: DetectedElements(other: elements),
+            metadata: single.metadata)
+    }
+
+    @MainActor
+    private static func countingRoutedDriver(onPost: @escaping @MainActor () -> Void) -> WindowRoutedPointerDriver {
+        WindowRoutedPointerDriver(
+            hasPostEventAccess: { true },
+            resolveRoute: { _, _, _ in throw ActionInputError.unsupported(.actionUnsupported) },
+            routeIsCurrent: { _ in true },
+            makeScrollEvent: { _, _ in nil },
+            stampWindowLocation: { _, _ in true },
+            postSkyLight: { _, _ in
+                onPost()
+                return true
+            },
+            postPublic: { _, _ in onPost() },
+            resolveTransport: { _ in .publicCGEvent },
+            applicationIsVisible: { _ in true },
+            windowIsVisible: { _ in true },
+            sleep: { _ in })
+    }
+
     private static func exactDetectionResult(
         element: DetectedElement,
         processIdentifier: pid_t = getpid(),
@@ -1235,6 +1347,7 @@ private final class ScrollRecordingActionInputDriver: ActionInputDriving {
     private(set) var scrollCalls: [ScrollCall] = []
     private(set) var scrollBarScopes: [ScrollBarSearchScope] = []
     private(set) var otherCalls: [String] = []
+    private(set) var revealCalls: [CGRect] = []
     private let afterScroll: @MainActor () -> Void
     private let scrollError: (any Error)?
 
@@ -1309,6 +1422,13 @@ private final class ScrollRecordingActionInputDriver: ActionInputDriving {
     {
         self.otherCalls.append("performAction")
         return AutomationTestFixtures.uiActionReceipt()
+    }
+
+    func tryScrollIntoView(element _: AutomationElement, visibleBounds: CGRect) throws
+        -> UIInputExecutionResult.Action
+    {
+        self.revealCalls.append(visibleBounds)
+        return AutomationTestFixtures.uiActionReceipt(actionName: "AXScrollToVisible", elementRole: "AXCell")
     }
 }
 

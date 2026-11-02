@@ -273,7 +273,7 @@ final class ActionInputMockAutomationElement: AutomationElementRepresenting, @un
     let identifier: String?
     let role: String?
     let subrole: String?
-    let frame: CGRect?
+    var frame: CGRect?
     var value: Any?
     var stringValue: String? {
         self.value as? String
