@@ -9,10 +9,12 @@ import Foundation
 /// so a page that scrolled or switched tabs still shows its old pixels. Peekaboo cannot make the
 /// window repaint without raising it, so it says so instead.
 @_spi(Testing) public enum CoveredWindowCapturePolicy {
+    /// Stale-capture warnings share the "Screenshot may be stale: " prefix (agreed with the off-Space
+    /// warning) and then name the reason.
     public static let staleCaptureWarning =
-        "This Chromium-based window is completely covered by other windows, so it is not repainting: " +
-        "the screenshot may show an older state than the accessibility elements. Trust the element list; " +
-        "the pixels refresh once any part of the window is uncovered."
+        "Screenshot may be stale: this Chromium-based window is completely covered by other windows " +
+        "and is not repainting. Its accessibility elements are current; the pixels refresh once any part " +
+        "of the window is uncovered."
 
     /// Whether the visible part of `window` (its intersection with the displays) lies entirely under
     /// the union of `covering` windows. All rectangles use global top-left display coordinates.
