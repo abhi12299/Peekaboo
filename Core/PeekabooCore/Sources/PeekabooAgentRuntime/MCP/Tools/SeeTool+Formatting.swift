@@ -54,10 +54,12 @@ struct SeeElementTextFormatter {
     }
 
     static func primaryLabel(for element: UIElement) -> String? {
-        if let title = element.title {
+        // Chromium answers AXTitle "" for cells and many web nodes; an empty title must not hide the
+        // label the observation resolved (for a cell, the text of its children).
+        if let title = element.title, !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return title
         }
-        if let label = element.label {
+        if let label = element.label, !label.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             return label
         }
         if let value = element.value {
