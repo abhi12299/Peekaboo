@@ -65,8 +65,8 @@ enum MCPSetValueSnapshotReuse {
 /// A window's accessibility elements without their values or IDs: each element's role and frame (rounded to whole
 /// points). IDs are positional, so a read that skips or adds one element renumbers the rest; later steps resolve their
 /// IDs through the stored snapshot and match the live element by role and frame, so those are what must not change.
-/// Pure containers (non-actionable groups such as the full-screen button's hover group) come and go between reads and
-/// are left out.
+/// Pure containers (non-actionable groups such as the full-screen button's hover group) come and go between reads, and
+/// a slider's or scroll bar's thumb (AXValueIndicator) moves with the value, so both are left out.
 private struct WindowStructure: Equatable {
     private struct Node: Comparable {
         let role: String
@@ -86,6 +86,7 @@ private struct WindowStructure: Equatable {
         self.nodes = elements.all
             .filter { !$0.isOCRSemanticEvidence && $0.attributes["source"] == nil }
             .filter { $0.attributes["role"] != "AXGroup" || $0.isActionable }
+            .filter { $0.attributes["role"] != "AXValueIndicator" }
             .map { element in
                 Node(
                     role: element.attributes["role"] ?? element.type.rawValue,

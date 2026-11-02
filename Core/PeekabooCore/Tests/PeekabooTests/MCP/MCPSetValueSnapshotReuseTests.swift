@@ -30,7 +30,10 @@ struct MCPSetValueSnapshotReuseTests {
     ]
 
     /// A form snapshot whose window, re-read after the write, holds `after`.
-    private static func fixture(after: [DetectedElement]) async throws -> MCPSnapshotMutationTestFixture {
+    private static func fixture(
+        before: [DetectedElement] = Self.form,
+        after: [DetectedElement]) async throws -> MCPSnapshotMutationTestFixture
+    {
         let fixture = try await MCPSnapshotMutationTestFixture.make()
         fixture.automation.uiAutomationOutcomeScript.setDefaultOutcome(.confirmedChange(
             delivery: .init(mechanism: .accessibilityValue, mode: .background)))
@@ -40,7 +43,7 @@ struct MCPSetValueSnapshotReuseTests {
             result: ElementDetectionResult(
                 snapshotId: fixture.snapshotID,
                 screenshotPath: stored.screenshotPath,
-                elements: DetectedElements(other: Self.form),
+                elements: DetectedElements(other: before),
                 metadata: stored.metadata))
         fixture.automation.accessibilityTree = ElementDetectionResult(
             snapshotId: "reread",
@@ -89,6 +92,29 @@ struct MCPSetValueSnapshotReuseTests {
                 attributes: element.attributes)
         }
         let fixture = try await Self.fixture(after: renumbered)
+
+        let response = try await Self.setValue(fixture)
+
+        #expect(response.meta?.objectValue?[Self.reusableKey] == .bool(true))
+    }
+
+    @Test
+    func `a slider's thumb moving with its value does not count as a structure change`() async throws {
+        let slider = DetectedElement(
+            id: "elem_3",
+            type: .slider,
+            bounds: CGRect(x: 150, y: 152, width: 250, height: 26),
+            attributes: ["role": "AXSlider"])
+        let thumb = { (x: CGFloat) in
+            DetectedElement(
+                id: "elem_4",
+                type: .other,
+                bounds: CGRect(x: x, y: 157, width: 20, height: 16),
+                attributes: ["role": "AXValueIndicator"])
+        }
+        let fixture = try await Self.fixture(
+            before: Self.form + [slider, thumb(265)],
+            after: Self.form + [slider, thumb(331)])
 
         let response = try await Self.setValue(fixture)
 
