@@ -678,6 +678,9 @@ struct ActionInputDriver: ActionInputDriving {
         beforeMutation: @MainActor () throws -> Void = {})
         async throws -> UIInputExecutionResult.Action
     {
+        if Self.isSteppedValueControl(element) {
+            return try await self.stepValue(value, on: element, beforeMutation: beforeMutation)
+        }
         if let rejectionReason = Self.setValueRejectionReason(
             role: element.role,
             subrole: element.subrole,
@@ -733,6 +736,13 @@ struct ActionInputDriver: ActionInputDriving {
             }
 
             let valueBefore = element.value
+            if let dateBefore = valueBefore as? Date {
+                return try await self.setDateValue(
+                    ElementDateValue(value),
+                    on: element,
+                    current: dateBefore,
+                    beforeMutation: beforeMutation)
+            }
             let readbackBefore = ElementValueReadback(nativeValue: valueBefore)
             guard !(valueBefore is NSNumber) || readbackBefore != nil else {
                 throw ActionInputError.failed("Native accessibility integer is outside the supported Int range")
@@ -802,6 +812,188 @@ struct ActionInputDriver: ActionInputDriving {
         } catch {
             throw Self.classify(error)
         }
+    }
+
+    /// Date pickers expose AXValue as a CFDate: write a date, then verify the readback at the requested precision.
+    private func setDateValue(
+        _ requested: ElementDateValue,
+        on element: any AutomationElementRepresenting,
+        current: Date,
+        beforeMutation: @MainActor () throws -> Void) async throws -> UIInputExecutionResult.Action
+    {
+        let verification = { (date: Date) in
+            ElementValueVerification(
+                attribute: .value,
+                resolvedKind: .string,
+                readback: .string(requested.describe(date)))
+        }
+        if requested.matches(current) {
+            return UIInputExecutionResult.Action(
+                outcome: .confirmedNoChange(),
+                actionName: AXActionNames.kAXSetValueAction,
+                anchorPoint: element.anchorPoint,
+                elementRole: element.role,
+                valueVerification: verification(current))
+        }
+        let observationTarget = try await self.observationTarget(element)
+        try Self.validateBeforeMutation(beforeMutation)
+        try element.setAutomationDateValue(requested.resolved(keepingTimeOf: current))
+        var dateAfter: Date?
+        var observedIdentity: FocusedElementIdentity?
+        guard await self.observeMutation(
+            on: element,
+            target: observationTarget,
+            attribute: .value,
+            matches: { sample in
+                if let sample {
+                    observedIdentity = sample.identity
+                    dateAfter = sample.dateValue
+                } else {
+                    dateAfter = element.value as? Date
+                }
+                return dateAfter.map(requested.matches) ?? false
+            }), let dateAfter
+        else {
+            throw Self.unverifiedValueMutationFailure(attribute: AXActionNames.kAXSetValueAction)
+        }
+        return UIInputExecutionResult.Action(
+            outcome: Self.dispatchedValueMutationOutcome(preStateKnown: true),
+            actionName: AXActionNames.kAXSetValueAction,
+            anchorPoint: observedIdentity.map { CGPoint(x: $0.frame.midX, y: $0.frame.midY) } ?? element.anchorPoint,
+            elementRole: observedIdentity?.role ?? element.role,
+            valueVerification: verification(dateAfter))
+    }
+
+    /// Steppers (AXIncrementor) expose a read-only AXValue that moves one step per AXIncrement/AXDecrement.
+    static func isSteppedValueControl(_ element: any AutomationElementRepresenting) -> Bool {
+        guard element.role == AXRoleNames.kAXIncrementorRole, !element.isValueSettable,
+              let readback = ElementValueReadback(nativeValue: element.value)
+        else { return false }
+        return readback.kind == .int || readback.kind == .double
+    }
+
+    static let maximumValueSteps = 1000
+
+    /// Steps a stepper to `value`, re-reading after every step. The AX action's return code is not trusted on its own:
+    /// a step can report an error yet move the value, so only the readback decides whether to continue.
+    private func stepValue(
+        _ value: UIElementValue,
+        on element: any AutomationElementRepresenting,
+        beforeMutation: @MainActor () throws -> Void) async throws -> UIInputExecutionResult.Action
+    {
+        guard let before = ElementValueReadback(nativeValue: element.value), let start = before.number?.doubleValue
+        else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "The stepper's value could not be read.")
+        }
+        let target: Double
+        do {
+            guard case let .double(parsed) = try ElementValueMutationSemantics.coerce(value, to: .double) else {
+                throw ActionInputError.failed("Expected a number")
+            }
+            target = parsed
+        } catch {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .invalidRequest,
+                message: "A stepper takes a number; got '\(value.displayString)'.")
+        }
+        let minimum = element.doubleAttribute("AXMinValue")
+        let maximum = element.doubleAttribute("AXMaxValue")
+        guard minimum.map({ target >= $0 }) ?? true, maximum.map({ target <= $0 }) ?? true else {
+            let range = "\(minimum.map(Self.describe) ?? "any value") to \(maximum.map(Self.describe) ?? "any value")"
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .invalidRequest,
+                message: "The stepper accepts \(range); got \(Self.describe(target)).")
+        }
+        let verification = { (readback: ElementValueReadback) in
+            ElementValueVerification(attribute: .value, resolvedKind: .double, readback: readback)
+        }
+        if ElementValueMutationSemantics.matches(before, expected: .double(target)) {
+            return UIInputExecutionResult.Action(
+                outcome: .confirmedNoChange(),
+                actionName: AXActionNames.kAXSetValueAction,
+                anchorPoint: element.anchorPoint,
+                elementRole: element.role,
+                valueVerification: verification(before))
+        }
+
+        let increasing = target > start
+        let action = increasing ? "AXIncrement" : "AXDecrement"
+        let observationTarget = try await self.observationTarget(element)
+        var current = start
+        var steps = 0
+        // The snapshot receipt is validated once; after that every step's readback re-checks the process generation
+        // and the element's identity, so a replaced or moved stepper stops the loop.
+        try Self.validateBeforeMutation(beforeMutation)
+        while true {
+            try Task.checkCancellation()
+            var stepError: ActionInputError?
+            do {
+                try element.performAutomationAction(action)
+            } catch {
+                let classified = Self.classify(error)
+                guard steps > 0 || Self.nativeMutationFailureMayHaveDispatched(classified) else { throw classified }
+                stepError = classified
+            }
+            steps += 1
+            var readback: ElementValueReadback?
+            var observedIdentity: FocusedElementIdentity?
+            let moved = await self.observeMutation(
+                on: element,
+                target: observationTarget,
+                attribute: .value,
+                matches: { sample in
+                    observedIdentity = sample?.identity ?? observedIdentity
+                    readback = sample.map(\.value) ?? ElementValueReadback(nativeValue: element.value)
+                    guard let next = readback?.number?.doubleValue, readback?.isFinite == true else { return false }
+                    return next != current
+                })
+            guard moved, let readback, let next = readback.number?.doubleValue else {
+                throw Self.stepFailure(
+                    "The stepper stopped at \(Self.describe(current)) before reaching \(Self.describe(target))",
+                    steps: steps,
+                    cause: stepError)
+            }
+            if ElementValueMutationSemantics.matches(readback, expected: .double(target)) {
+                return UIInputExecutionResult.Action(
+                    outcome: .confirmedChange(delivery: Self.accessibilityValueDelivery),
+                    actionName: AXActionNames.kAXSetValueAction,
+                    anchorPoint: observedIdentity.map { CGPoint(x: $0.frame.midX, y: $0.frame.midY) } ??
+                        element.anchorPoint,
+                    elementRole: observedIdentity?.role ?? element.role,
+                    valueVerification: verification(readback))
+            }
+            guard increasing ? next < target : next > target else {
+                throw Self.stepFailure(
+                    "The stepper moved past \(Self.describe(target)) to \(Self.describe(next)); " +
+                        "its step does not land on the requested value",
+                    steps: steps,
+                    cause: stepError)
+            }
+            guard steps < Self.maximumValueSteps else {
+                throw Self.stepFailure(
+                    "The stepper reached \(Self.describe(next)) without reaching \(Self.describe(target))",
+                    steps: steps,
+                    cause: stepError)
+            }
+            current = next
+        }
+    }
+
+    /// A stepper failure is reported as one logical value mutation, like its success: the Bridge contract binds
+    /// set-value to exactly one accessibilityValue unit. The physical step count goes in the message.
+    private static func stepFailure(_ message: String, steps: Int, cause: ActionInputError?) -> DesktopActionFailure {
+        .partial(
+            delivery: self.accessibilityValueDelivery,
+            unitCount: .one,
+            message: message + " after \(steps) step\(steps == 1 ? "" : "s").",
+            hint: "Observe the stepper before setting it again.",
+            causeDescription: cause?.localizedDescription)
+    }
+
+    private nonisolated static func describe(_ number: Double) -> String {
+        ElementValueReadback.double(number).displayString
     }
 
     func performObservedMutation(

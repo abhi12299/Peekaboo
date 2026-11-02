@@ -1,0 +1,264 @@
+import CoreGraphics
+import Foundation
+import MCP
+import PeekabooAutomationKitTestSupport
+import PeekabooFoundation
+import TachikomaMCP
+import Testing
+@testable import PeekabooAgentRuntime
+@testable import PeekabooAutomationKit
+@testable import PeekabooCore
+
+/// A `set_value` that leaves the window's structure as it was keeps its snapshot usable for later steps of a batch.
+@MainActor
+struct MCPSetValueSnapshotReuseTests {
+    private static let reusableKey = MCPToolResponseMetadataProjector.snapshotReusableForElementClicksKey
+
+    private static func element(_ id: String, _ role: String, y: CGFloat, value: String? = nil) -> DetectedElement {
+        DetectedElement(
+            id: id,
+            type: .textField,
+            value: value,
+            bounds: CGRect(x: 150, y: y, width: 140, height: 26),
+            attributes: ["role": role])
+    }
+
+    private static let form = [
+        Self.element("elem_0", "AXTextField", y: 20, value: "1"),
+        Self.element("elem_1", "AXDateTimeArea", y: 64, value: "2026-11-01"),
+        Self.element("elem_2", "AXComboBox", y: 108, value: "USD"),
+    ]
+
+    /// A form snapshot whose window, re-read after the write, holds `after`.
+    private static func fixture(
+        before: [DetectedElement] = Self.form,
+        after: [DetectedElement],
+        capturedMetadata: (DetectionMetadata) -> DetectionMetadata = { $0 },
+        rereadMetadata: (DetectionMetadata) -> DetectionMetadata = { $0 }) async throws
+        -> MCPSnapshotMutationTestFixture
+    {
+        let fixture = try await MCPSnapshotMutationTestFixture.make()
+        fixture.automation.uiAutomationOutcomeScript.setDefaultOutcome(.confirmedChange(
+            delivery: .init(mechanism: .accessibilityValue, mode: .background)))
+        let stored = try #require(try await fixture.storage.getDetectionResult(snapshotId: fixture.snapshotID))
+        try await fixture.storage.storeDetectionResult(
+            snapshotId: fixture.snapshotID,
+            result: ElementDetectionResult(
+                snapshotId: fixture.snapshotID,
+                screenshotPath: stored.screenshotPath,
+                elements: DetectedElements(other: before),
+                metadata: capturedMetadata(stored.metadata)))
+        fixture.automation.accessibilityTree = ElementDetectionResult(
+            snapshotId: "reread",
+            screenshotPath: "",
+            elements: DetectedElements(other: after),
+            metadata: rereadMetadata(stored.metadata))
+        return fixture
+    }
+
+    private static func setValue(_ fixture: MCPSnapshotMutationTestFixture) async throws -> ToolResponse {
+        try await fixture.context.execute(
+            tool: SetValueTool(context: fixture.context),
+            arguments: ToolArguments(raw: ["on": "T1", "value": "EUR", "snapshot": fixture.snapshotID]))
+    }
+
+    @Test
+    func `a value write that leaves the window's structure unchanged keeps the snapshot reusable`() async throws {
+        let unchanged = [
+            Self.element("elem_0", "AXTextField", y: 20, value: "1"),
+            Self.element("elem_1", "AXDateTimeArea", y: 64, value: "2026-11-01"),
+            Self.element("elem_2", "AXComboBox", y: 108, value: "EUR"),
+        ]
+        let fixture = try await Self.fixture(after: unchanged)
+
+        let response = try await Self.setValue(fixture)
+
+        #expect(!response.isError)
+        #expect(fixture.automation.setValueCalls == 1)
+        #expect(response.meta?.objectValue?[Self.reusableKey] == .bool(true))
+    }
+
+    @Test
+    func `a re-read that numbers the same elements differently still keeps the snapshot reusable`() async throws {
+        // AX reads can skip or add a pure container (the full-screen button's hover group), which shifts every
+        // later positional ID; later steps resolve IDs through the stored snapshot, so only roles and frames count.
+        let titleBarGroup = DetectedElement(
+            id: "elem_0",
+            type: .group,
+            bounds: CGRect(x: 195, y: 100, width: 14, height: 14),
+            attributes: ["role": "AXGroup"])
+        let renumbered = [titleBarGroup] + Self.form.enumerated().map { index, element in
+            DetectedElement(
+                id: "elem_\(index + 1)",
+                type: element.type,
+                bounds: element.bounds,
+                attributes: element.attributes)
+        }
+        let fixture = try await Self.fixture(after: renumbered)
+
+        let response = try await Self.setValue(fixture)
+
+        #expect(response.meta?.objectValue?[Self.reusableKey] == .bool(true))
+    }
+
+    @Test
+    func `a slider's thumb moving with its value does not count as a structure change`() async throws {
+        let slider = DetectedElement(
+            id: "elem_3",
+            type: .slider,
+            bounds: CGRect(x: 150, y: 152, width: 250, height: 26),
+            attributes: ["role": "AXSlider"])
+        let thumb = { (x: CGFloat) in
+            DetectedElement(
+                id: "elem_4",
+                type: .other,
+                bounds: CGRect(x: x, y: 157, width: 20, height: 16),
+                attributes: ["role": "AXValueIndicator"])
+        }
+        let fixture = try await Self.fixture(
+            before: Self.form + [slider, thumb(265)],
+            after: Self.form + [slider, thumb(331)])
+
+        let response = try await Self.setValue(fixture)
+
+        #expect(response.meta?.objectValue?[Self.reusableKey] == .bool(true))
+    }
+
+    /// The same metadata with other warnings, truncation or window.
+    private static func metadata(
+        _ base: DetectionMetadata,
+        warnings: [String]? = nil,
+        truncation: DetectionTruncationInfo? = nil,
+        windowID: Int? = nil) -> DetectionMetadata
+    {
+        let window = base.windowContext
+        return DetectionMetadata(
+            detectionTime: base.detectionTime,
+            elementCount: base.elementCount,
+            method: base.method,
+            warnings: warnings ?? base.warnings,
+            windowContext: windowID.map { id in
+                WindowContext(
+                    applicationName: window?.applicationName,
+                    applicationProcessId: window?.applicationProcessId,
+                    applicationProcessStartIdentity: window?.applicationProcessStartIdentity,
+                    windowTitle: window?.windowTitle,
+                    windowID: id,
+                    windowBounds: window?.windowBounds)
+            } ?? window,
+            isDialog: base.isDialog,
+            truncationInfo: truncation ?? base.truncationInfo)
+    }
+
+    @Test(arguments: ["reread incomplete", "reread truncated", "captured incomplete", "app fallback", "other window"])
+    func `equal nodes from an incomplete or inexact read leave the snapshot stale`(evidence: String) async throws {
+        let incomplete = DetectionTruncationInfo(incompleteAccessibilityRead: true)
+        let fixture = try await Self.fixture(
+            after: Self.form,
+            capturedMetadata: { evidence == "captured incomplete" ? Self.metadata($0, truncation: incomplete) : $0 },
+            rereadMetadata: { base in
+                switch evidence {
+                case "reread incomplete": Self.metadata(base, truncation: incomplete)
+                case "reread truncated": Self.metadata(base, truncation: .init(maxElementCountReached: true))
+                case "app fallback": Self.metadata(
+                        base,
+                        warnings: [DetectionMetadata.applicationScopedAccessibilityFallbackWarning])
+                case "other window": Self.metadata(base, windowID: 4242)
+                default: base
+                }
+            })
+
+        let response = try await Self.setValue(fixture)
+
+        #expect(!response.isError)
+        #expect(response.meta?.objectValue?[Self.reusableKey] == nil)
+    }
+
+    @Test(arguments: ["added", "moved", "role"])
+    func `a value write that reshapes the window leaves the snapshot stale`(change: String) async throws {
+        var after = Self.form
+        switch change {
+        case "added": after.append(Self.element("elem_3", "AXTextField", y: 152))
+        case "moved": after[1] = Self.element("elem_1", "AXDateTimeArea", y: 90)
+        default: after[2] = Self.element("elem_2", "AXPopUpButton", y: 108)
+        }
+        let fixture = try await Self.fixture(after: after)
+
+        let response = try await Self.setValue(fixture)
+
+        #expect(!response.isError)
+        #expect(fixture.automation.accessibilityTreeReads == 1)
+        #expect(response.meta?.objectValue?[Self.reusableKey] == nil)
+    }
+
+    @Test
+    func `a window that cannot be read again leaves the snapshot stale`() async throws {
+        let fixture = try await Self.fixture(after: Self.form)
+        fixture.automation.accessibilityTree = nil
+
+        let response = try await Self.setValue(fixture)
+
+        #expect(!response.isError)
+        #expect(response.meta?.objectValue?[Self.reusableKey] == nil)
+    }
+
+    @Test
+    func `a batch of value writes that keep the window's structure runs to the end`() async throws {
+        let fixture = try await Self.fixture(after: Self.form)
+
+        let response = try await fixture.context.execute(
+            tool: BatchTool(context: fixture.context),
+            arguments: ToolArguments(raw: [
+                "snapshot": fixture.snapshotID,
+                "observe_after": false,
+                "steps": [
+                    ["tool": "set_value", "args": ["on": "T1", "value": "34"]],
+                    ["tool": "set_value", "args": ["on": "T1", "value": "2027-03-15"]],
+                    ["tool": "set_value", "args": ["on": "T1", "value": "EUR"]],
+                ],
+            ]))
+
+        #expect(!response.isError, "\(Self.text(response))")
+        #expect(fixture.automation.setValueCalls == 3)
+        #expect(Self.text(response).contains("Ran all 3 steps."))
+    }
+
+    @Test
+    func `a batch stops after a value write that reshapes the window`() async throws {
+        let fixture = try await Self.fixture(after: Self.form + [Self.element("elem_3", "AXTextField", y: 152)])
+
+        let response = try await fixture.context.execute(
+            tool: BatchTool(context: fixture.context),
+            arguments: ToolArguments(raw: [
+                "snapshot": fixture.snapshotID,
+                "steps": [
+                    ["tool": "set_value", "args": ["on": "T1", "value": "34"]],
+                    ["tool": "set_value", "args": ["on": "T1", "value": "EUR"]],
+                ],
+            ]))
+
+        #expect(response.isError)
+        #expect(fixture.automation.setValueCalls == 1)
+        #expect(Self.text(response).contains("is stale after step 1 (set_value)"))
+    }
+
+    @Test
+    func `the descriptions point date pickers, steppers and combo boxes at set_value`() async {
+        let context = await MCPToolTestHelpers.makeContext(executionPolicy: .unrestricted)
+        let setValue = SetValueTool(context: context).description
+        #expect(setValue.contains("date picker"))
+        #expect(setValue.contains("2027-03-15"))
+        #expect(setValue.contains("stepper"))
+        #expect(setValue.contains("combo box"))
+        #expect(setValue.contains("[value settable]"))
+        let batch = BatchTool(context: context).description
+        #expect(batch.contains("set_value steps that leave the window's structure unchanged"))
+    }
+
+    private static func text(_ response: ToolResponse) -> String {
+        response.content.compactMap { content -> String? in
+            guard case let .text(text, _, _) = content else { return nil }
+            return text
+        }.joined(separator: "\n")
+    }
+}

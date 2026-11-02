@@ -306,6 +306,9 @@ final class ActionInputMockAutomationElement: AutomationElementRepresenting, @un
     var performedActions: [String] = []
     var attemptedActions: [String] = []
     var setValues: [UIElementValue] = []
+    var setDates: [Date] = []
+    /// Runs after an advertised action succeeds, e.g. to move a stepper's value on AXIncrement.
+    var onPerformedAction: ((String, ActionInputMockAutomationElement) throws -> Void)?
     var setFocusedValues: [Bool] = []
     var setSelectedValues: [Bool] = []
     var isTextSelectionSettable = false
@@ -415,6 +418,7 @@ final class ActionInputMockAutomationElement: AutomationElementRepresenting, @un
             throw AccessibilitySystemError(.actionUnsupported)
         }
         self.performedActions.append(actionName)
+        try self.onPerformedAction?(actionName, self)
     }
 
     func setAutomationValue(_ value: UIElementValue) throws {
@@ -436,6 +440,18 @@ final class ActionInputMockAutomationElement: AutomationElementRepresenting, @un
         case let .string(value):
             self.value = value
         }
+    }
+
+    func setAutomationDateValue(_ date: Date) throws {
+        guard self.isValueSettable else {
+            throw AccessibilitySystemError(.attributeUnsupported)
+        }
+        self.setDates.append(date)
+        if let valueSetterError {
+            throw valueSetterError
+        }
+        guard !self.valueSetterDoesNotChange else { return }
+        self.value = date as NSDate
     }
 
     func setAutomationFocused(_ focused: Bool) throws {

@@ -147,9 +147,14 @@ extension UIAutomationService: ElementActionAutomationServiceProtocol {
                     valueVerification = action.valueVerification
                     return action
                 } catch let error as ActionInputError where error.isUnsupportedValueMutation {
-                    throw PeekabooError.invalidInput(Self.unsupportedSetValueMessage(
-                        target: resolved.description,
-                        reason: error.localizedDescription))
+                    // Nothing was written: refuse before dispatch so the snapshot stays usable.
+                    throw DesktopActionFailure.preDispatchRefusal(
+                        reason: .operationUnsupported,
+                        message: Self.unsupportedSetValueMessage(
+                            target: resolved.description,
+                            reason: error.localizedDescription),
+                        hint: "Only elements marked \"[value settable]\" take set_value. For a pop-up button or " +
+                            "menu, click it and then click the item.")
                 }
             },
             synthesis: DesktopOperationPlan.SynthesisRoute {

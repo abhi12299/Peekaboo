@@ -31,6 +31,8 @@ struct AXMutationObservationSnapshot: Sendable {
     let identity: FocusedElementIdentity
     let focused: Bool?
     let value: ElementValueReadback?
+    /// AXValue when it is a CFDate (date pickers), which has no scalar readback.
+    let dateValue: Date?
     let legacyPresentation: String?
     let selected: Bool?
     let selectedTextRange: TextSelectionRange?
@@ -39,6 +41,7 @@ struct AXMutationObservationSnapshot: Sendable {
         identity: FocusedElementIdentity,
         focused: Bool? = nil,
         value: ElementValueReadback? = nil,
+        dateValue: Date? = nil,
         legacyPresentation: String? = nil,
         selected: Bool? = nil,
         selectedTextRange: TextSelectionRange? = nil)
@@ -46,6 +49,7 @@ struct AXMutationObservationSnapshot: Sendable {
         self.identity = identity
         self.focused = focused
         self.value = value
+        self.dateValue = dateValue
         self.legacyPresentation = legacyPresentation
         self.selected = selected
         self.selectedTextRange = selectedTextRange
@@ -164,6 +168,7 @@ enum DetachedAXMutationReader {
 
         var focused: Bool?
         var value: ElementValueReadback?
+        var dateValue: Date?
         var legacyPresentation: String?
         var selected: Bool?
         var selectedTextRange: TextSelectionRange?
@@ -180,6 +185,9 @@ enum DetachedAXMutationReader {
                 if let readback = ElementValueReadback(nativeValue: nativeValue), readback.isFinite {
                     value = readback
                     legacyPresentation = NativeElementValuePresentation.describe(nativeValue)
+                }
+                if let nativeValue, CFGetTypeID(nativeValue) == CFDateGetTypeID() {
+                    dateValue = nativeValue as? Date
                 }
             }
         case .selectedTextRange:
@@ -224,6 +232,7 @@ enum DetachedAXMutationReader {
             identity: afterIdentity,
             focused: focused,
             value: readable ? value : nil,
+            dateValue: readable ? dateValue : nil,
             legacyPresentation: readable ? legacyPresentation : nil,
             selected: selected,
             selectedTextRange: readable ? selectedTextRange : nil)

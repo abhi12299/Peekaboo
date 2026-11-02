@@ -14,8 +14,12 @@ public struct SetValueTool: MCPTool {
 
     public var description: String {
         """
-        Sets an accessibility element value directly without synthesizing keystrokes.
-        Use for forms and controls after `see` or `inspect_ui` returns an element ID. Requires a settable AX value.
+        Sets a control's value directly through accessibility, in the background and without keystrokes, then reads
+        it back. Use it on elements `see` or `inspect_ui` marks "[value settable]": text fields, combo boxes (pass the
+        item text, e.g. "EUR"), sliders, checkboxes, a date picker (pass yyyy-MM-dd, e.g. "2027-03-15"; its time of
+        day is kept) and a stepper (pass the number; it is stepped there and checked, about 0.1 s per step, so a text
+        field paired with it is quicker to set). Prefer it to typing or clicking arrows. When the window's structure
+        is unchanged the result says the snapshot may be reused, so several set_value steps can run in one `batch`.
         \(PeekabooMCPVersion.banner) using openai/gpt-5.6, anthropic/claude-opus-5
         """
     }
@@ -33,7 +37,7 @@ public struct SetValueTool: MCPTool {
                         SchemaBuilder.integer(),
                         SchemaBuilder.number(),
                     ],
-                    description: "Value to set. Supported types: string, boolean, integer, or number."),
+                    description: "Value to set: string, boolean, integer, or number. Dates as yyyy-MM-dd."),
                 "snapshot": SchemaBuilder.string(
                     description: "Optional. Snapshot ID from `see` or `inspect_ui`. " +
                         "Uses latest snapshot if not specified."),
@@ -91,12 +95,17 @@ public struct SetValueTool: MCPTool {
                             value: request.value,
                             snapshotId: snapshot.id)
                     })
+            let reusable = await MCPSetValueSnapshotReuse.keepsSnapshotReusable(
+                outcome: actionResult.outcome,
+                snapshotID: snapshot.id,
+                context: self.context)
             let elapsed = Date().timeIntervalSince(startTime)
             return try self.buildResponse(
                 actionResult: actionResult,
                 value: request.value,
                 executionTime: elapsed,
-                invalidatedSnapshotId: invalidatedSnapshotId)
+                invalidatedSnapshotId: invalidatedSnapshotId,
+                reusableSnapshotId: reusable ? snapshot.id : nil)
         } catch let error as SetValueToolError {
             return try Self.preDispatchErrorResponse(error)
         } catch let failure as DesktopActionFailure {
@@ -145,11 +154,16 @@ public struct SetValueTool: MCPTool {
         actionResult: UIAutomationActionResult<ElementActionResult>,
         value: UIElementValue,
         executionTime: TimeInterval,
-        invalidatedSnapshotId: String?) throws -> ToolResponse
+        invalidatedSnapshotId: String?,
+        reusableSnapshotId: String?) throws -> ToolResponse
     {
         let result = actionResult.payload
-        let message = "\(AgentDisplayTokens.Status.success) Set value on \(result.target) in " +
+        var message = "\(AgentDisplayTokens.Status.success) Set value on \(result.target) in " +
             "\(String(format: "%.2f", executionTime))s"
+        if let reusableSnapshotId {
+            message += ". The window's structure is unchanged, so snapshot '\(reusableSnapshotId)' may be reused " +
+                "for further element actions (pass it as `snapshot`)."
+        }
 
         var meta: [String: Value] = [
             "execution_time": .double(executionTime),
@@ -174,6 +188,9 @@ public struct SetValueTool: MCPTool {
         }
         if let invalidatedSnapshotId {
             meta["invalidated_snapshot"] = .string(invalidatedSnapshotId)
+        }
+        if reusableSnapshotId != nil {
+            meta[MCPToolResponseMetadataProjector.snapshotReusableForElementClicksKey] = .bool(true)
         }
         meta = try MCPDesktopTargetMetadataProjector.fields(actionResult.targetIdentity, merging: meta)
 
