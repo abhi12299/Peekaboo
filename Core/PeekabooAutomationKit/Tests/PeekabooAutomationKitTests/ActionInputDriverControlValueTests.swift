@@ -37,4 +37,24 @@ struct ActionInputDriverControlValueTests {
             newValue: "2027-03-15",
             actionName: AXActionNames.kAXSetValueAction) == true)
     }
+
+    @Test(arguments: ["2027-3-5", "2027-02-30", "15/03/2027", "next tuesday"])
+    func `date picker refuses unclear date text before writing anything`(text: String) async {
+        let element = ActionInputMockAutomationElement(
+            role: "AXDateTimeArea",
+            value: Self.date(2026, 11, 1) as NSDate,
+            isValueSettable: true)
+
+        do {
+            _ = try await ActionInputDriver().trySetValueForTesting(element: element, value: .string(text))
+            Issue.record("Expected '\(text)' to be refused")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.dispatchState == .none)
+            #expect(failure.outcome.refusalReason == .invalidRequest)
+            #expect(failure.message.contains("2027-03-15"))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+        #expect(element.setDates.isEmpty)
+    }
 }

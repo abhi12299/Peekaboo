@@ -1,4 +1,5 @@
 import Foundation
+import PeekabooFoundation
 
 /// A date requested for a date picker's AXValue (a CFDate), parsed from `set_value` text.
 ///
@@ -26,7 +27,7 @@ struct ElementDateValue {
 
     init(_ value: UIElementValue) throws {
         guard case let .string(raw) = value else {
-            throw ActionInputError.failed("Expected \(Self.acceptedFormatsDescription)")
+            throw Self.refusal("Expected \(Self.acceptedFormatsDescription).")
         }
         let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         for candidate in Self.candidates(for: text) {
@@ -39,7 +40,15 @@ struct ElementDateValue {
             self.timeZone = candidate.timeZone
             return
         }
-        throw ActionInputError.failed("Expected \(Self.acceptedFormatsDescription); got '\(raw)'")
+        throw Self.refusal("Expected \(Self.acceptedFormatsDescription); got '\(raw)'.")
+    }
+
+    /// Text that is not a clear date is refused before anything is written.
+    private static func refusal(_ message: String) -> DesktopActionFailure {
+        .preDispatchRefusal(
+            reason: .invalidRequest,
+            message: message,
+            hint: "Pass the date as yyyy-MM-dd, for example 2027-03-15.")
     }
 
     /// The date to write: a day-only request keeps the current value's time of day.
