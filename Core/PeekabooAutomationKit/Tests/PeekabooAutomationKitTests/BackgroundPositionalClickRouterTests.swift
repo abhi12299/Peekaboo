@@ -97,6 +97,50 @@ struct BackgroundPositionalClickRouterTests {
         #expect(outcome.dispatchState.unitCount?.rawValue == 3)
         #expect(!outcome.isConfirmed)
     }
+    /// Chromium and Electron windows on another Space take keys and accessibility actions but not pointer
+    /// events, even inside the focus session (measured with an Electron window on this Mac). Nothing is sent.
+    @Test(arguments: [WindowRoutedApplicationKind.chromium, .electron])
+    func `pointer click on an off-Space Chromium window is refused naming the Space and what works`(
+        kind: WindowRoutedApplicationKind) async throws
+    {
+        let log = RouterLog()
+        log.applicationKind = kind
+        log.placement = .otherSpace(spaceID: 5, spaceNumber: 3)
+
+        let failure = await #expect(throws: DesktopActionFailure.self) {
+            try await log.router().click(at: Fixture.point, button: .left, count: 1, target: Fixture.target())
+        }
+
+        #expect(log.steps.isEmpty)
+        #expect(failure?.outcome.state == .refused)
+        #expect(failure?.outcome.refusalReason == .operationUnsupported)
+        let text = failure.map { "\($0.localizedDescription) \($0.hint ?? "")" } ?? ""
+        #expect(text.contains("window 100 is on Space 3"))
+        #expect(text.contains("element ID"))
+        #expect(text.contains("press"))
+        #expect(!text.contains("safe to retry"))
+    }
+
+    @Test
+    func `pointer click on an off-Space AppKit window still runs in the focus session`() async throws {
+        let log = RouterLog()
+        log.placement = .otherSpace(spaceID: 5, spaceNumber: 3)
+
+        _ = try await log.router().click(at: Fixture.point, button: .left, count: 1, target: Fixture.target())
+
+        #expect(log.steps.first == .record(.focus))
+        #expect(log.steps.contains(.pointer(.leftMouseDown)))
+    }
+
+    @Test
+    func `pointer click on a visible Chromium window is still routed`() async throws {
+        let log = RouterLog()
+        log.applicationKind = .chromium
+
+        _ = try await log.router().click(at: Fixture.point, button: .left, count: 1, target: Fixture.target())
+
+        #expect(log.steps.contains(.pointer(.leftMouseDown)))
+    }
 }
 
 private enum Fixture {
@@ -122,10 +166,14 @@ private final class RouterLog {
     var environment: [String: String] = [:]
     var steps: [Step] = []
     var pointerEvents: [CGEvent] = []
+    var applicationKind: WindowRoutedApplicationKind = .appKit
+    var placement: WindowSpacePlacement = .visibleSpace
 
     func router() -> BackgroundPositionalClickRouter {
         BackgroundPositionalClickRouter(
             hitTest: { _, _ in self.hitTestCandidates },
+            applicationKind: { _ in self.applicationKind },
+            spacePlacement: { _ in self.placement },
             isAccessibilityTrusted: { true },
             validateWindowIdentity: { _, _ in true },
             pointerDriver: self.pointerDriver(),
