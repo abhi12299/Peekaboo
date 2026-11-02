@@ -1007,10 +1007,10 @@ extension DetachedAXObservationWorker {
                 parentRole: descriptor.role,
                 children: { self.children(of: $0, node: node).elements },
                 textualNode: { child in
-                    guard ContinuousClock.now < deadline else { return nil }
                     self.prepare(child, deadline: deadline)
                     return self.textualNode(of: child, node: node)
-                })
+                },
+                shouldContinue: { ContinuousClock.now < deadline })
             : []
         return ElementLabelResolver.resolve(
             info: info,
@@ -1028,10 +1028,9 @@ extension DetachedAXObservationWorker {
         guard ElementLabelResolver.childTextRoles.contains(role.lowercased()) else {
             return AXTextualNode(role: role, text: nil)
         }
-        let text = [kAXTitleAttribute, "AXLabel", kAXValueAttribute, kAXDescriptionAttribute]
-            .lazy
-            .compactMap { self.rawAttributeRead($0, of: element, node: node).value as? String }
-            .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        let text = AXTextualNode.firstNonBlank(
+            [kAXTitleAttribute, "AXLabel", kAXValueAttribute, kAXDescriptionAttribute]
+                .map { self.rawAttributeRead($0, of: element, node: node).value as? String })
         return AXTextualNode(role: role, text: text)
     }
 

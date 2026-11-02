@@ -79,7 +79,9 @@ struct AXTreeCollector {
         }
         return AXTextualNode(
             role: role,
-            text: element.title() ?? element.label() ?? element.stringValue() ?? element.descriptionText())
+            text: AXTextualNode.firstNonBlank([
+                element.title(), element.label(), element.stringValue(), element.descriptionText(),
+            ]))
     }
 
     func collect(window: Element, deadline: Date, budget: AXTraversalBudget? = nil) -> Result {

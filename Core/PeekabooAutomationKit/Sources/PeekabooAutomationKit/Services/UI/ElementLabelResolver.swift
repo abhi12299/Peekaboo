@@ -142,6 +142,14 @@ import Foundation
         self.role = role
         self.text = text
     }
+
+    /// The first candidate with visible characters. Chromium answers AXTitle "" (not unsupported) on
+    /// static text whose words are in AXValue, so an empty string must not end the search.
+    public static func firstNonBlank(_ candidates: [String?]) -> String? {
+        candidates.lazy
+            .compactMap { $0 }
+            .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+    }
 }
 
 extension ElementLabelResolver {
@@ -157,26 +165,38 @@ extension ElementLabelResolver {
     @_spi(Testing) public static let childTextRoles: Set<String> =
         buttonChildTextRoles.union(textContainerChildTextRoles)
 
+    /// Descendants examined per label. A label needs a few words, not the subtree: a cell holding a
+    /// large widget and no text must not turn into a second tree walk.
+    @_spi(Testing) public static let childTextNodeBudget = 64
+
     /// Collects up to `limit` texts from the descendants of `root`, depth-first and at most `maxDepth`
     /// levels down, from the roles that may label a node with `parentRole`.
     ///
     /// Frames are deliberately not consulted: a descendant Chromium clipped out of the viewport still
-    /// carries its text.
-    @_spi(Testing) public static func childTexts<Node>(
+    /// carries its text. The walk reads each node once, examines at most `childTextNodeBudget` nodes,
+    /// and stops as soon as `shouldContinue` says so (the caller's deadline).
+    @_spi(Testing) public static func childTexts<Node: Hashable>(
         of root: Node,
         parentRole: String,
         maxDepth: Int = 3,
         limit: Int = 4,
         children: (Node) -> [Node],
-        textualNode: (Node) -> AXTextualNode?) -> [String]
+        textualNode: (Node) -> AXTextualNode?,
+        shouldContinue: () -> Bool = { true }) -> [String]
     {
         let roles = self.isTextContainerRole(parentRole)
             ? self.textContainerChildTextRoles
             : self.buttonChildTextRoles
         var results: [String] = []
+        var seen: Set<Node> = [root]
+        func canContinue() -> Bool {
+            results.count < limit && seen.count <= self.childTextNodeBudget && !Task.isCancelled && shouldContinue()
+        }
         func visit(_ node: Node, depth: Int) {
-            guard depth < maxDepth, results.count < limit, !Task.isCancelled else { return }
+            guard depth < maxDepth, canContinue() else { return }
             for child in children(node) {
+                guard canContinue() else { return }
+                guard seen.insert(child).inserted else { continue }
                 if let textual = textualNode(child),
                    roles.contains(textual.role.lowercased()),
                    let text = self.normalize(textual.text)

@@ -282,7 +282,9 @@ struct ActionInputDriver: ActionInputDriving {
                 // AXScrollToVisible is idempotent once the target is visible, so it serves as that flush.
                 _ = try? self.performAction(Self.scrollToVisibleAction, on: element)
             }
-            if let frame = element.frame, frame.intersects(visibleBounds) {
+            // Fully inside, not merely intersecting: a target that was already partly visible must
+            // show the requested reveal, and AXScrollToVisible scrolls a target that fits until it fits.
+            if let frame = element.frame, visibleBounds.insetBy(dx: -1, dy: -1).contains(frame) {
                 return UIInputExecutionResult.Action(
                     outcome: .confirmedChange(delivery: Self.accessibilityActionDelivery, unitCount: .one),
                     actionName: Self.scrollToVisibleAction,

@@ -94,6 +94,53 @@ struct ChromiumWebContentTraversalTests {
         #expect(result.truncationInfo?.maxDepthReached == true)
     }
 
+    /// Live Chrome 156: a cell's AXStaticText answers AXTitle "" (success, empty), AXLabel unsupported,
+    /// AXValue "Quillfield". The text readers must skip the empty title instead of stopping at it.
+    @Test
+    func `descendant text skips an empty title and takes the value`() {
+        #expect(AXTextualNode.firstNonBlank(["", nil, "Quillfield", ""]) == "Quillfield")
+        #expect(AXTextualNode.firstNonBlank(["  ", nil]) == nil)
+    }
+
+    /// A cell holding a large widget and no text must not turn the label walk into a tree walk, and a
+    /// node that lists itself among its children (Chrome ARIA tabs) is read once.
+    @Test
+    func `descendant text walk is bounded and visits each node once`() {
+        var childrenReads = 0
+        var textReads = 0
+        let texts = ElementLabelResolver.childTexts(
+            of: 0,
+            parentRole: "AXCell",
+            children: { (node: Int) -> [Int] in
+                childrenReads += 1
+                return node == 1 ? [1] + (0..<100).map { 1000 + node * 100 + $0 } : (0..<100).map { node * 100 + $0 + 1 }
+            },
+            textualNode: { _ in
+                textReads += 1
+                return AXTextualNode(role: "AXGroup", text: nil)
+            })
+
+        #expect(texts.isEmpty)
+        #expect(childrenReads + textReads <= ElementLabelResolver.childTextNodeBudget * 2)
+    }
+
+    @Test
+    func `descendant text walk stops when told to`() {
+        var textReads = 0
+        let texts = ElementLabelResolver.childTexts(
+            of: 0,
+            parentRole: "AXCell",
+            children: { (node: Int) -> [Int] in node < 50 ? [node + 1] : [] },
+            textualNode: { node in
+                textReads += 1
+                return AXTextualNode(role: "AXStaticText", text: "t\(node)")
+            },
+            shouldContinue: { textReads < 1 })
+
+        #expect(texts == ["t1"])
+        #expect(textReads == 1)
+    }
+
     /// Distinct AX element references that are never messaged: every read goes through the injected readers.
     @MainActor static func fakeElement(_ index: Int32) -> Element {
         Element(AXUIElementCreateApplication(900_000 + index))
@@ -187,6 +234,41 @@ struct ChromiumScrollIntoViewDriverTests {
         }
         #expect(cell.performedActions == ["AXScrollToVisible", "AXScrollToVisible"])
         #expect(samples > 0)
+    }
+
+    /// A target already partly inside the page must end fully inside it. An accepted action that leaves
+    /// the frame where it was proves nothing, even though the frame intersects the page.
+    @Test @MainActor
+    func `partly clipped target that never moves is indeterminate`() async {
+        let cell = ActionInputMockAutomationElement(
+            role: "AXCell",
+            frame: CGRect(x: 225, y: 880, width: 119, height: 39),
+            actionNames: ["AXScrollToVisible"])
+        let driver = ActionInputDriver(observationDelay: {})
+
+        do {
+            _ = try await driver.tryScrollIntoViewForTesting(element: cell, visibleBounds: Self.visiblePage)
+            Issue.record("Expected an indeterminate outcome")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .indeterminate)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
+
+    @Test @MainActor
+    func `partly clipped target confirms once it is fully inside the page`() async throws {
+        let cell = ActionInputMockAutomationElement(
+            role: "AXCell",
+            frame: CGRect(x: 225, y: 880, width: 119, height: 39),
+            actionNames: ["AXScrollToVisible"])
+        let driver = ActionInputDriver(observationDelay: {
+            cell.frame = CGRect(x: 225, y: 853, width: 119, height: 39)
+        })
+
+        let result = try await driver.tryScrollIntoViewForTesting(element: cell, visibleBounds: Self.visiblePage)
+
+        #expect(result.outcome.state == .confirmedChange)
     }
 
     @Test @MainActor
