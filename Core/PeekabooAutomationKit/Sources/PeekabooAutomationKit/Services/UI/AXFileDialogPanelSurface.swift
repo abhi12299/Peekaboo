@@ -113,7 +113,8 @@ final class AXFileDialogPanelSurface: FileDialogPanelSurface {
             container, kAXSelectedChildrenAttribute as CFString, [child] as CFArray) == .success
         else { return false }
         let selected = (self.attribute(container, kAXSelectedChildrenAttribute) as? [AXUIElement]) ?? []
-        return selected.count == 1 && CFEqual(selected[0], child)
+        return (selected.count == 1 && CFEqual(selected[0], child)) ||
+            (self.attribute(entry.element, kAXSelectedAttribute) as? Bool) == true
     }
 
     // MARK: Name and buttons
@@ -205,6 +206,13 @@ final class AXFileDialogPanelSurface: FileDialogPanelSurface {
         var parent = self.parent(of: element)
         while let current = parent {
             if [kAXListRole, kAXOutlineRole, kAXTableRole].contains(self.role(current) ?? "") {
+                // Icon view nests items in an AXSectionList; only the enclosing collection takes a selection.
+                if self.stringValue(current, kAXSubroleAttribute) == "AXSectionList",
+                   let collection = self.parent(of: current),
+                   self.role(collection) == kAXListRole
+                {
+                    return (collection, child)
+                }
                 return (current, child)
             }
             if CFEqual(current, self.panel) { return nil }
