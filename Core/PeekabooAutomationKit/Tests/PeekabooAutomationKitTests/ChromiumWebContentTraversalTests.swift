@@ -48,6 +48,51 @@ struct ChromiumWebContentTraversalTests {
         #expect(published.label == "Quillfield")
     }
 
+    /// Chrome nests its page under eight levels of browser UI, so the default depth of 12 used to stop
+    /// at the table cells. Depth inside web content is counted from the page's AXWebArea.
+    @Test @MainActor
+    func `default depth reaches table cells under Chrome's browser chrome`() {
+        // window → 7 browser groups → AXWebArea (depth 8) → group → table → row → cell (depth 12) → text
+        let roles = Array(repeating: "AXGroup", count: 8) + ["AXWebArea", "AXGroup", "AXTable", "AXRow", "AXCell"]
+        let chain = roles.indices.map { Self.fakeElement(100 + Int32($0)) }
+        let text = Self.fakeElement(99)
+        let collector = AXTreeCollector(
+            descriptorReader: { element in
+                if element == text {
+                    return .descriptor(Self.descriptor(role: "AXStaticText", title: "Quillfield"))
+                }
+                guard let index = chain.firstIndex(of: element) else { return .absent }
+                return .descriptor(Self.descriptor(role: roles[index]))
+            },
+            childrenReader: { element in
+                guard let index = chain.firstIndex(of: element) else { return [] }
+                return index + 1 < chain.count ? [chain[index + 1]] : [text]
+            },
+            textReader: { _ in nil })
+
+        let result = collector.collect(window: chain[0], deadline: Date().addingTimeInterval(1))
+
+        #expect(result.truncationInfo == nil)
+        #expect(result.elements.contains { $0.label == "Quillfield" })
+    }
+
+    @Test @MainActor
+    func `native trees without web content keep the absolute depth limit`() {
+        let chain = (0..<14).map { Self.fakeElement(200 + Int32($0)) }
+        let collector = AXTreeCollector(
+            descriptorReader: { _ in .descriptor(Self.descriptor(role: "AXGroup")) },
+            childrenReader: { element in
+                guard let index = chain.firstIndex(of: element), index + 1 < chain.count else { return [] }
+                return [chain[index + 1]]
+            },
+            textReader: { _ in nil })
+
+        let result = collector.collect(window: chain[0], deadline: Date().addingTimeInterval(1))
+
+        #expect(result.elements.count == AXTraversalBudget.defaultMaxDepth)
+        #expect(result.truncationInfo?.maxDepthReached == true)
+    }
+
     /// Distinct AX element references that are never messaged: every read goes through the injected readers.
     @MainActor static func fakeElement(_ index: Int32) -> Element {
         Element(AXUIElementCreateApplication(900_000 + index))

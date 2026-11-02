@@ -90,7 +90,7 @@ struct AXTreeCollector {
         // which makes `see --app` slower and returns elements outside the screenshot.
         self.processElement(
             window,
-            depth: 0,
+            depth: .root,
             deadline: deadline,
             budget: resolvedBudget,
             state: &state)
@@ -106,12 +106,12 @@ struct AXTreeCollector {
 
     private func processElement(
         _ element: Element,
-        depth: Int,
+        depth: AXTraversalDepth,
         deadline: Date,
         budget: AXTraversalBudget,
         state: inout TraversalState)
     {
-        guard depth < budget.maxDepth else {
+        guard depth.level < budget.maxDepth else {
             state.truncationFlags.maxDepthReached = true
             return
         }
@@ -137,7 +137,7 @@ struct AXTreeCollector {
             // Every descendant must still pass its own complete role/frame descriptor read.
             self.processChildren(
                 of: element,
-                depth: depth + 1,
+                depth: depth.child(ofRole: nil),
                 deadline: deadline,
                 budget: budget,
                 state: &state)
@@ -188,7 +188,7 @@ struct AXTreeCollector {
 
         self.processChildren(
             of: element,
-            depth: depth + 1,
+            depth: depth.child(ofRole: descriptor.role),
             deadline: deadline,
             budget: budget,
             state: &state)
@@ -196,7 +196,7 @@ struct AXTreeCollector {
 
     private func processChildren(
         of element: Element,
-        depth: Int,
+        depth: AXTraversalDepth,
         deadline: Date,
         budget: AXTraversalBudget,
         state: inout TraversalState)
