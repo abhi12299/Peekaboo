@@ -56,7 +56,7 @@ import PeekabooFoundation
         "axmenuitem", "axtab",
     ]
     private static let valueMetadataRoles: Set<String> = [
-        "axcheckbox", "axcombobox", "axdatefield", "axincrementor", "axpopupbutton",
+        "axcheckbox", "axcombobox", "axdatefield", "axdatetimearea", "axincrementor", "axpopupbutton",
         "axradiobutton", "axscrollbar", "axsearchfield", "axsecuretextfield", "axslider",
         "axswitch", "axtextarea", "axtextfield",
     ]

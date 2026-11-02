@@ -200,6 +200,19 @@ enum DetachedAXObservationWorker {
         return deadlineExpired ? .deadline : nil
     }
 
+    /// Whether `set_value` can set the element. A stepper's AXValue is read-only, but `set_value` steps it with
+    /// AXIncrement/AXDecrement; the stepper inside a date picker is left out because the date picker itself is set.
+    static func settableBySetValue(
+        role: String,
+        axValueSettable: Bool?,
+        actions: [String],
+        parentRole: String?) -> Bool?
+    {
+        guard role == kAXIncrementorRole as String, axValueSettable == false else { return axValueSettable }
+        guard parentRole != "AXDateTimeArea" else { return false }
+        return actions.contains("AXIncrement") && actions.contains("AXDecrement")
+    }
+
     static func valueSettableMetadata(error: AXError, isSettable: Bool) -> Bool? {
         error == .success ? isSettable : nil
     }
@@ -601,12 +614,20 @@ enum DetachedAXObservationWorker {
         let exposesAction = self.actionableRoles.contains(normalizedRole) ||
             (self.actionLookupRoles.contains(normalizedRole) &&
                 self.actions(of: element, node: state.visited.count).contains(kAXPressAction))
-        let isValueSettable = self.valueSettable(
+        var isValueSettable = self.valueSettable(
             of: element,
             role: descriptor.role,
             recoveredType: elementType,
             node: state.visited.count,
             deadline: request.deadline)
+        if descriptor.role == kAXIncrementorRole as String, isValueSettable == false {
+            isValueSettable = self.settableBySetValue(
+                role: descriptor.role,
+                axValueSettable: isValueSettable,
+                actions: self.actions(of: element, node: state.visited.count),
+                parentRole: self.elementAttribute(kAXParentAttribute, of: element)
+                    .flatMap { self.stringAttribute(kAXRoleAttribute, of: $0) })
+        }
         let isActionable = exposesAction || isValueSettable == true
         let elementID = request.source == nil ?
             "elem_\(state.elements.count)" : "menuitem_\(state.elements.count)"
