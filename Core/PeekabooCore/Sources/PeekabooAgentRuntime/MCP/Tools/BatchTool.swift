@@ -22,9 +22,10 @@ public struct BatchTool: MCPTool {
         one of click, type, press, scroll, select_text, set_value, paste or sleep, and args are exactly what that
         tool takes on its own; each step gets the same validation, policy and background delivery as a separate call.
         A step that omits `snapshot` (and names no app/pid/window/coordinate_reference target) reuses the batch
-        `snapshot` or the last snapshot an earlier step named. Element clicks delivered as accessibility actions
-        keep the snapshot reusable; after any other mutating step, a later step that would reuse it stops the batch
-        instead. The batch stops at the first failed step and lists which steps ran and which did not; a step that
+        `snapshot` or the last snapshot an earlier step named. Element clicks delivered as accessibility actions, and
+        set_value steps that leave the window's structure unchanged, keep the snapshot reusable; after any other
+        mutating step, a later step that would reuse it stops the batch instead. The batch stops at the first failed
+        step and lists which steps ran and which did not; a step that
         was delivered but is unverified counts as done. Set `observe_after` to true (observe the window of the first
         snapshot) or to `see` arguments such as {"app_target": "Calculator"} to get a fresh `see` after the last
         step; it is skipped when a step fails. When `observe_after` is omitted and a step is unverified, the batch

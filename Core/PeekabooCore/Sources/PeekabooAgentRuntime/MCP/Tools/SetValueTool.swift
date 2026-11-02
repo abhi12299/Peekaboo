@@ -14,8 +14,12 @@ public struct SetValueTool: MCPTool {
 
     public var description: String {
         """
-        Sets an accessibility element value directly without synthesizing keystrokes.
-        Use for forms and controls after `see` or `inspect_ui` returns an element ID. Requires a settable AX value.
+        Sets a control's value directly through accessibility, in the background and without keystrokes, then reads
+        it back. Use it on elements `see` or `inspect_ui` marks "[value settable]": text fields, combo boxes (pass the
+        item text, e.g. "EUR"), sliders, checkboxes, a date picker (pass yyyy-MM-dd, e.g. "2027-03-15"; its time of
+        day is kept) and a stepper (pass the number; it is stepped there and checked). Prefer it to typing or clicking
+        arrows. When the window's structure is unchanged the result says the snapshot may be reused, so several
+        set_value steps can run in one `batch`.
         \(PeekabooMCPVersion.banner) using openai/gpt-5.6, anthropic/claude-opus-5
         """
     }
@@ -33,7 +37,7 @@ public struct SetValueTool: MCPTool {
                         SchemaBuilder.integer(),
                         SchemaBuilder.number(),
                     ],
-                    description: "Value to set. Supported types: string, boolean, integer, or number."),
+                    description: "Value to set: string, boolean, integer, or number. Dates as yyyy-MM-dd."),
                 "snapshot": SchemaBuilder.string(
                     description: "Optional. Snapshot ID from `see` or `inspect_ui`. " +
                         "Uses latest snapshot if not specified."),

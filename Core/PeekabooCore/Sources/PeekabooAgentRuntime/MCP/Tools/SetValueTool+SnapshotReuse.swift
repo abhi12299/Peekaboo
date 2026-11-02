@@ -9,7 +9,7 @@ import PeekabooFoundation
 ///
 /// Writing a value usually changes only that value. A write can still reshape the window (a choice that reveals more
 /// fields, a combo box that opens a list), so the snapshot is reused only when an AX-only re-read of the same window
-/// shows the same elements with the same IDs, roles and frames. Values are ignored. Anything that cannot be checked
+/// shows the same elements with the same roles and frames. Values are ignored. Anything that cannot be checked
 /// keeps the snapshot stale.
 enum MCPSetValueSnapshotReuse {
     @MainActor
@@ -62,15 +62,22 @@ enum MCPSetValueSnapshotReuse {
     }
 }
 
-/// A window's accessibility elements without their values: ID, role and frame (rounded to whole points).
+/// A window's accessibility elements without their values or IDs: each element's role and frame (rounded to whole
+/// points). IDs are positional, so a read that skips or adds one element renumbers the rest; later steps resolve their
+/// IDs through the stored snapshot and match the live element by role and frame, so those are what must not change.
+/// Pure containers (non-actionable groups such as the full-screen button's hover group) come and go between reads and
+/// are left out.
 private struct WindowStructure: Equatable {
-    private struct Node: Equatable {
-        let id: String
-        let role: String?
+    private struct Node: Comparable {
+        let role: String
         let x: Int
         let y: Int
         let width: Int
         let height: Int
+
+        static func < (lhs: Node, rhs: Node) -> Bool {
+            (lhs.role, lhs.x, lhs.y, lhs.width, lhs.height) < (rhs.role, rhs.x, rhs.y, rhs.width, rhs.height)
+        }
     }
 
     private let nodes: [Node]
@@ -78,16 +85,16 @@ private struct WindowStructure: Equatable {
     init(_ elements: DetectedElements) {
         self.nodes = elements.all
             .filter { !$0.isOCRSemanticEvidence && $0.attributes["source"] == nil }
+            .filter { $0.attributes["role"] != "AXGroup" || $0.isActionable }
             .map { element in
                 Node(
-                    id: element.id,
-                    role: element.attributes["role"],
+                    role: element.attributes["role"] ?? element.type.rawValue,
                     x: Int(element.bounds.minX.rounded()),
                     y: Int(element.bounds.minY.rounded()),
                     width: Int(element.bounds.width.rounded()),
                     height: Int(element.bounds.height.rounded()))
             }
-            .sorted { $0.id < $1.id }
+            .sorted()
     }
 
     var isEmpty: Bool {

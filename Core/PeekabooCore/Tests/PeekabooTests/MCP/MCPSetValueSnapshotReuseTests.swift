@@ -72,6 +72,29 @@ struct MCPSetValueSnapshotReuseTests {
         #expect(response.meta?.objectValue?[Self.reusableKey] == .bool(true))
     }
 
+    @Test
+    func `a re-read that numbers the same elements differently still keeps the snapshot reusable`() async throws {
+        // AX reads can skip or add a pure container (the full-screen button's hover group), which shifts every
+        // later positional ID; later steps resolve IDs through the stored snapshot, so only roles and frames count.
+        let titleBarGroup = DetectedElement(
+            id: "elem_0",
+            type: .group,
+            bounds: CGRect(x: 195, y: 100, width: 14, height: 14),
+            attributes: ["role": "AXGroup"])
+        let renumbered = [titleBarGroup] + Self.form.enumerated().map { index, element in
+            DetectedElement(
+                id: "elem_\(index + 1)",
+                type: element.type,
+                bounds: element.bounds,
+                attributes: element.attributes)
+        }
+        let fixture = try await Self.fixture(after: renumbered)
+
+        let response = try await Self.setValue(fixture)
+
+        #expect(response.meta?.objectValue?[Self.reusableKey] == .bool(true))
+    }
+
     @Test(arguments: ["added", "moved", "role"])
     func `a value write that reshapes the window leaves the snapshot stale`(change: String) async throws {
         var after = Self.form
@@ -138,6 +161,19 @@ struct MCPSetValueSnapshotReuseTests {
         #expect(response.isError)
         #expect(fixture.automation.setValueCalls == 1)
         #expect(Self.text(response).contains("is stale after step 1 (set_value)"))
+    }
+
+    @Test
+    func `the descriptions point date pickers, steppers and combo boxes at set_value`() async {
+        let context = await MCPToolTestHelpers.makeContext(executionPolicy: .unrestricted)
+        let setValue = SetValueTool(context: context).description
+        #expect(setValue.contains("date picker"))
+        #expect(setValue.contains("2027-03-15"))
+        #expect(setValue.contains("stepper"))
+        #expect(setValue.contains("combo box"))
+        #expect(setValue.contains("[value settable]"))
+        let batch = BatchTool(context: context).description
+        #expect(batch.contains("set_value steps that leave the window's structure unchanged"))
     }
 
     private static func text(_ response: ToolResponse) -> String {
