@@ -91,12 +91,17 @@ public struct SetValueTool: MCPTool {
                             value: request.value,
                             snapshotId: snapshot.id)
                     })
+            let reusable = await MCPSetValueSnapshotReuse.keepsSnapshotReusable(
+                outcome: actionResult.outcome,
+                snapshotID: snapshot.id,
+                context: self.context)
             let elapsed = Date().timeIntervalSince(startTime)
             return try self.buildResponse(
                 actionResult: actionResult,
                 value: request.value,
                 executionTime: elapsed,
-                invalidatedSnapshotId: invalidatedSnapshotId)
+                invalidatedSnapshotId: invalidatedSnapshotId,
+                reusableSnapshotId: reusable ? snapshot.id : nil)
         } catch let error as SetValueToolError {
             return try Self.preDispatchErrorResponse(error)
         } catch let failure as DesktopActionFailure {
@@ -145,11 +150,16 @@ public struct SetValueTool: MCPTool {
         actionResult: UIAutomationActionResult<ElementActionResult>,
         value: UIElementValue,
         executionTime: TimeInterval,
-        invalidatedSnapshotId: String?) throws -> ToolResponse
+        invalidatedSnapshotId: String?,
+        reusableSnapshotId: String?) throws -> ToolResponse
     {
         let result = actionResult.payload
-        let message = "\(AgentDisplayTokens.Status.success) Set value on \(result.target) in " +
+        var message = "\(AgentDisplayTokens.Status.success) Set value on \(result.target) in " +
             "\(String(format: "%.2f", executionTime))s"
+        if let reusableSnapshotId {
+            message += ". The window's structure is unchanged, so snapshot '\(reusableSnapshotId)' may be reused " +
+                "for further element actions (pass it as `snapshot`)."
+        }
 
         var meta: [String: Value] = [
             "execution_time": .double(executionTime),
@@ -174,6 +184,9 @@ public struct SetValueTool: MCPTool {
         }
         if let invalidatedSnapshotId {
             meta["invalidated_snapshot"] = .string(invalidatedSnapshotId)
+        }
+        if reusableSnapshotId != nil {
+            meta[MCPToolResponseMetadataProjector.snapshotReusableForElementClicksKey] = .bool(true)
         }
         meta = try MCPDesktopTargetMetadataProjector.fields(actionResult.targetIdentity, merging: meta)
 

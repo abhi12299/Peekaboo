@@ -107,6 +107,9 @@ final class MCPSnapshotLeaseAutomationService: MockAutomationService,
     private(set) var exactHotkeyCalls = 0
     var typeError: (any Error)?
     var mutationError: (any Error)?
+    /// What an AX-only re-read of the window returns; nil keeps the mock's default (not implemented).
+    var accessibilityTree: ElementDetectionResult?
+    private(set) var accessibilityTreeReads = 0
 
     var mutationCalls: Int {
         self.clickCalls.count + self.targetedClickCalls.count + self.scrollRequests.count +
@@ -180,6 +183,14 @@ final class MCPSnapshotLeaseAutomationService: MockAutomationService,
     func hotkey(keys _: String, holdDuration _: Int, target _: ExactWindowKeyboardTarget) async throws {
         self.exactHotkeyCalls += 1
         try self.throwMutationErrorIfNeeded()
+    }
+
+    override func inspectAccessibilityTree(windowContext: WindowContext?) async throws -> ElementDetectionResult {
+        self.accessibilityTreeReads += 1
+        if let accessibilityTree {
+            return accessibilityTree
+        }
+        return try await super.inspectAccessibilityTree(windowContext: windowContext)
     }
 
     func setValue(target: String, value: UIElementValue, snapshotId _: String?) async throws -> ElementActionResult {
