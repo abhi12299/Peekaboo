@@ -199,6 +199,13 @@ extension PeekabooBridgeClient {
         if request.requiresScopedMenuBarActions {
             try self.requireScopedMenuBarActions()
         }
+        if request.requestsBackgroundFileDialogExecution {
+            throw DesktopActionFailure.preDispatchRefusal(
+                route: .bridge,
+                reason: .runtimeIncompatible,
+                message: "Bridge hosts cannot run background file-dialog execution yet; no input was sent.",
+                hint: "Run the file action in-process (PEEKABOO_NO_REMOTE=1 or --no-remote), or pass foreground.")
+        }
         if request.requiresExactFileDialogExecution {
             try self.requireExactFileDialogExecution()
         }

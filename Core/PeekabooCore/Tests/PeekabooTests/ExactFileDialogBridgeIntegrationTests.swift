@@ -68,6 +68,37 @@ struct ExactFileDialogBridgeIntegrationTests {
     }
 
     @Test
+    func `background file execution is refused before transport even by a capable host`() async throws {
+        // Hosts at 1.43 decode the request without the background flag and would run the foreground keyboard
+        // route, so background file execution stays in-process until a capability says otherwise.
+        let dialogs = ExactFileDialogBridgeStub()
+        let fixture = try await Self.startHost(dialogs: dialogs)
+        defer { Task { await fixture.host.stop() } }
+        _ = try await fixture.client.handshake(client: Self.clientIdentity)
+        let request = try DialogFileExecutionRequest(
+            target: DialogTargetSelector(processIdentifier: 4242, windowID: 700),
+            path: "/tmp",
+            filename: "fixture.txt",
+            background: true)
+
+        for raw in [false, true] {
+            do {
+                if raw {
+                    _ = try await fixture.client.send(.dialogHandleFile(.init(execution: request)))
+                } else {
+                    _ = try await fixture.client.dialogHandleFile(request)
+                }
+                Issue.record("Expected background file execution to refuse before transport")
+            } catch let failure as DesktopActionFailure {
+                #expect(failure.outcome.state == .refused)
+                #expect(failure.outcome.dispatchState == .none)
+                #expect(failure.message.contains("background"))
+            }
+        }
+        #expect(dialogs.requests.isEmpty)
+    }
+
+    @Test
     func `server requires attestation claimed capability and version before the file provider`() throws {
         let dialogs = ExactFileDialogBridgeStub()
         let server = PeekabooBridgeServer(

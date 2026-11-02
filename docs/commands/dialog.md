@@ -64,6 +64,8 @@ automatic clicks require complete discovery, one dialog, and one enabled AXPress
     panel changes; only the default button is pressed (`--select` other than `default` is refused in this mode); the
     Where menu is a popup menu, so it shows on screen for a moment; column view is slower (one discovery walk of
     every column, about 10 s).
+  - It runs in-process only. Bridge clients refuse it before transport, because hosts at protocol 1.43 would
+    ignore the background flag and run the foreground route; use `--no-remote` / `PEEKABOO_NO_REMOTE=1`.
   - Works for in-process sheets and for the sandboxed Open and Save Panel Service (TextEdit) on macOS 27: both
     expose the panel's tree through the host app's window.
 - `--foreground` `dialog file` and forced dismissal use global keyboard or coordinate events and therefore require

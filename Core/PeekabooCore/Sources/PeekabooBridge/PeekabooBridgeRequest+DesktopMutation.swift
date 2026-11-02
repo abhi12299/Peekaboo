@@ -100,6 +100,13 @@ extension PeekabooBridgeRequest {
         return payload.execution != nil
     }
 
+    /// Background (accessibility-only) file-dialog execution. Hosts at 1.43 decode the request without this
+    /// flag and would run the foreground keyboard route, so clients keep it in-process.
+    var requestsBackgroundFileDialogExecution: Bool {
+        guard case let .dialogHandleFile(payload) = self.unwrappedOperationRequest else { return false }
+        return payload.execution?.background == true
+    }
+
     var requiresClipboardGuardedExactWindowHotkey: Bool {
         guard case let .exactWindowTargetedHotkey(payload) = self.unwrappedOperationRequest else { return false }
         return payload.clipboardClaim != nil
