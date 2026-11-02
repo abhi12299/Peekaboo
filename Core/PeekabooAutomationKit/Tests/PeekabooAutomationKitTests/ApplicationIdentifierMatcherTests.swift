@@ -153,27 +153,6 @@ struct ApplicationIdentifierMatcherTests {
     }
 
     @Test
-    func `An app wins over an accessory helper that shares its exact name`() throws {
-        // Chrome runs an alert-notification helper whose localized name is also "Google Chrome".
-        let candidates = [
-            ApplicationIdentifierMatcher.Candidate(
-                processIdentifier: 77917,
-                bundleIdentifier: "com.google.Chrome.framework.AlertNotificationService",
-                name: "Google Chrome",
-                isRegularApplication: false),
-            ApplicationIdentifierMatcher.Candidate(
-                processIdentifier: 2494,
-                bundleIdentifier: "com.google.Chrome",
-                name: "Google Chrome",
-                isRegularApplication: true),
-        ]
-        let resolution = try #require(try ApplicationIdentifierMatcher.resolution(
-            for: "Google Chrome", in: candidates))
-        #expect(!resolution.hasWinningTie)
-        #expect(candidates[resolution.index].processIdentifier == 2494)
-    }
-
-    @Test
     func `Tied fuzzy winners are explicit and fail closed`() throws {
         let candidates = [
             ApplicationIdentifierMatcher.Candidate(

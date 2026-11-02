@@ -241,13 +241,7 @@ public enum ApplicationIdentifierMatcher {
         in candidates: [Candidate],
         matches: (Candidate) -> Bool) -> Selection?
     {
-        var indices = candidates.indices.filter { matches(candidates[$0]) }
-        // A name or executable shared by an app and its helpers (Chrome's alert-notification helper is also
-        // called "Google Chrome") names the app the user sees: regular apps win over accessory processes.
-        if [.exactName, .exactExecutable].contains(kind) {
-            let regular = indices.filter { candidates[$0].isRegularApplication }
-            if !regular.isEmpty { indices = regular }
-        }
+        let indices = candidates.indices.filter { matches(candidates[$0]) }
         guard let index = indices.first else { return nil }
         return Selection(index: index, kind: kind, winningIndices: indices)
     }
