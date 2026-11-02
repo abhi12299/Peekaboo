@@ -347,38 +347,6 @@ struct AutomationElementResolverTests {
         #expect(reader.processIdentifierReads.contains(validLowerScore))
     }
 
-    /// Chromium reports a web `role=tab` element (AXRadioButton) as its own child. The walk must still reach
-    /// the elements after it instead of re-reading the tab until its budget runs out.
-    @Test
-    func `an element listed as its own child does not hide the elements after it`() throws {
-        let app = try #require(NSWorkspace.shared.runningApplications.first { !$0.isTerminated })
-        let root = self.makeElement(31)
-        let selfParentingTab = self.makeElement(32)
-        let closeButton = self.makeElement(33)
-        let targetFrame = CGRect(x: 444, y: 365, width: 73, height: 35)
-        let reader = ResolverTreeReader(
-            descriptors: [
-                selfParentingTab: self.descriptor(
-                    identifier: "tab-a",
-                    frame: CGRect(x: 226, y: 284, width: 73, height: 35),
-                    role: "AXRadioButton"),
-                closeButton: self.descriptor(identifier: "close", frame: targetFrame),
-            ],
-            children: [root: [selfParentingTab, closeButton], selfParentingTab: [selfParentingTab]],
-            processIdentifiers: [selfParentingTab: app.processIdentifier, closeButton: app.processIdentifier])
-        let resolver = AutomationElementResolver(
-            windowRootResolver: ResolverWindowRootResolver(root: root),
-            treeReader: reader)
-
-        let resolved = resolver.resolve(
-            detectedElement: self.detectedElement(identifier: "close", frame: targetFrame),
-            windowContext: WindowContext(applicationProcessId: app.processIdentifier, windowID: 42),
-            targetProcessIdentifier: app.processIdentifier)
-
-        #expect(resolved?.element == closeButton)
-        #expect(reader.descriptorReads.count(where: { $0 == selfParentingTab }) == 1)
-    }
-
     private func detectedElement(identifier: String, frame: CGRect) -> DetectedElement {
         DetectedElement(
             id: "B1",

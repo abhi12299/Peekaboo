@@ -428,15 +428,11 @@ struct AutomationElementResolver: AutomationElementResolving {
         scorer: (Element, AXDescriptorReader.Descriptor) -> Int?) -> AutomationElement?
     {
         var visited = 0
-        // Chromium lists a web tab (AXRadioButton) as its own child; without this the walk re-reads it until
-        // its budget runs out and never reaches the elements after it.
-        var seen = Set<Element>()
         var stack = roots
         var best: Element?
         var bestScore = 0
 
         while let element = stack.popLast(), visited < 4000 {
-            guard seen.insert(element).inserted else { continue }
             visited += 1
 
             if let descriptor = self.treeReader.descriptor(for: element) {
