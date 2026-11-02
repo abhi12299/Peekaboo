@@ -379,12 +379,46 @@ extension DialogService {
         try Task.checkCancellation()
         return switch membership {
         case .structuralMutation, .filePanel:
-            structuralCandidates
+            Self.collapsingSharedDialogCandidates(structuralCandidates)
         case .readOnlyCompatible:
             DialogElementClassifier.preferredReadCandidates(
-                structural: structuralCandidates,
+                structural: Self.collapsingSharedDialogCandidates(structuralCandidates),
                 legacy: legacyCandidates)
         }
+    }
+
+    /// A sheet has its own WindowServer window next to its parent's, and both resolve to the parent's AX window
+    /// and the same sheet. Keep one candidate per (AX window, dialog) pair: the WindowServer window whose title
+    /// matches the AX window (the parent), else the lower window ID.
+    static func collapsingSharedDialogCandidates(
+        _ candidates: [TargetedDialogCandidate]) -> [TargetedDialogCandidate]
+    {
+        var collapsed: [TargetedDialogCandidate] = []
+        for candidate in candidates {
+            guard let index = collapsed.firstIndex(where: {
+                $0.window == candidate.window && $0.dialog == candidate.dialog
+            }) else {
+                collapsed.append(candidate)
+                continue
+            }
+            if self.prefersAsDialogOwner(candidate, over: collapsed[index]) {
+                collapsed[index] = candidate
+            }
+        }
+        return collapsed
+    }
+
+    private static func prefersAsDialogOwner(
+        _ candidate: TargetedDialogCandidate,
+        over current: TargetedDialogCandidate) -> Bool
+    {
+        let title = candidate.window.title()
+        let candidateMatches = title != nil && candidate.resolvedTarget.windowTitle == title
+        let currentMatches = title != nil && current.resolvedTarget.windowTitle == title
+        if candidateMatches != currentMatches {
+            return candidateMatches
+        }
+        return candidate.target.identity.windowID < current.target.identity.windowID
     }
 
     private static func windowResolutionProof(

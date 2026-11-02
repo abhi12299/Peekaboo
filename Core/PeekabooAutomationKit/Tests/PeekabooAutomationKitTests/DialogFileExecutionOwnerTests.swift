@@ -63,6 +63,37 @@ struct DialogFileExecutionOwnerTests {
     }
 
     @Test
+    func `a sheet reached through its parent and its own window is one dialog candidate`() throws {
+        // A Save sheet has its own WindowServer window ("Save") next to its parent ("Exporter"); both resolve to
+        // the parent's AX window and the same sheet, which made `dialog file --pid` ambiguous.
+        let parent = Element(
+            AXUIElementCreateApplication(-1),
+            attributes: ["AXTitle": .string("Exporter")],
+            children: [],
+            actions: [])
+        let sheet = FileExecutionOwnerFixture.element(2)
+        let sheetWindow = try FileExecutionOwnerFixture.target(windowID: 9505)
+        let parentWindow = try FileExecutionOwnerFixture.target(windowID: 9504)
+        let candidates = try [
+            DialogService.TargetedDialogCandidate(
+                target: sheetWindow,
+                resolvedTarget: FileExecutionOwnerFixture.evidence(target: sheetWindow, title: "Save"),
+                window: parent,
+                dialog: sheet),
+            DialogService.TargetedDialogCandidate(
+                target: parentWindow,
+                resolvedTarget: FileExecutionOwnerFixture.evidence(target: parentWindow, title: "Exporter"),
+                window: parent,
+                dialog: sheet),
+        ]
+
+        let collapsed = DialogService.collapsingSharedDialogCandidates(candidates)
+
+        #expect(collapsed.count == 1)
+        #expect(collapsed.first?.target.identity.windowID == 9504)
+    }
+
+    @Test
     func `file execution refuses missing parent or selector evidence before dispatch`() throws {
         let fixture = try FileExecutionOwnerFixture()
         var missingParent = try fixture.resolution()
