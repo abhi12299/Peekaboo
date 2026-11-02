@@ -145,6 +145,28 @@ struct ChromiumScrollIntoViewDriverTests {
         #expect(result.outcome.delivery == .init(mechanism: .accessibilityAction, mode: .background))
     }
 
+    /// A fully covered Chrome window stops rendering frames. It still applies AXScrollToVisible, but
+    /// reports the new geometry only once the next AX action flushes it. Live: y 1786 stayed put
+    /// after one action and read 791 within 20 ms of a second, idempotent one.
+    @Test @MainActor
+    func `occluded renderer geometry is flushed by one repeated AXScrollToVisible`() async throws {
+        let cell = ActionInputMockAutomationElement(
+            role: "AXCell",
+            frame: CGRect(x: 295, y: 1786, width: 119, height: 39),
+            actionNames: ["AXScrollToVisible"])
+        let driver = ActionInputDriver(observationDelay: {
+            if cell.performedActions.count >= 2 {
+                cell.frame = CGRect(x: 295, y: 791, width: 119, height: 39)
+            }
+        })
+
+        let result = try await driver.tryScrollIntoViewForTesting(element: cell, visibleBounds: Self.visiblePage)
+
+        #expect(cell.performedActions == ["AXScrollToVisible", "AXScrollToVisible"])
+        #expect(result.outcome.state == .confirmedChange)
+        #expect(result.outcome.dispatchState.unitCount == .one)
+    }
+
     @Test @MainActor
     func `scroll into view is indeterminate when the target never enters the visible page`() async {
         let cell = ActionInputMockAutomationElement(
@@ -163,7 +185,7 @@ struct ChromiumScrollIntoViewDriverTests {
         } catch {
             Issue.record("Unexpected error: \(error)")
         }
-        #expect(cell.performedActions == ["AXScrollToVisible"])
+        #expect(cell.performedActions == ["AXScrollToVisible", "AXScrollToVisible"])
         #expect(samples > 0)
     }
 

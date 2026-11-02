@@ -276,6 +276,12 @@ struct ActionInputDriver: ActionInputDriving {
     {
         let dispatched = try self.performAction(Self.scrollToVisibleAction, on: element)
         for sample in 0..<Self.scrollIntoViewSamples {
+            if sample == Self.scrollIntoViewFlushSample {
+                // A fully covered Chrome window stops rendering frames: it applies the scroll but reports
+                // the new geometry only when the next AX action flushes it. Repeating the same
+                // AXScrollToVisible is idempotent once the target is visible, so it serves as that flush.
+                _ = try? self.performAction(Self.scrollToVisibleAction, on: element)
+            }
             if let frame = element.frame, frame.intersects(visibleBounds) {
                 return UIInputExecutionResult.Action(
                     outcome: .confirmedChange(delivery: Self.accessibilityActionDelivery, unitCount: .one),
@@ -301,6 +307,8 @@ struct ActionInputDriver: ActionInputDriving {
     private static let scrollToVisibleAction = "AXScrollToVisible"
     /// 25 samples at the default 20 ms observation delay: about half a second.
     private static let scrollIntoViewSamples = 25
+    /// About 100 ms in: long enough for a rendering window to report the scroll on its own.
+    private static let scrollIntoViewFlushSample = 5
 
     func trySetText(
         element: AutomationElement,
