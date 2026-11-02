@@ -145,6 +145,8 @@ public struct BackgroundFileDialogNavigator {
             try self.panel.cancelLocationMenu()
         } else {
             try self.panel.chooseLocationMenuItem(at: volumeIndex - (shared - 1))
+            try await self.waitUntil { try self.panel.currentFolderName() == names[shared - 1] }
+            try self.requireCurrentFolder(chain[shared - 1])
             steps.append("where:\(names[shared - 1])")
         }
         for folder in chain[shared...] {
@@ -154,7 +156,13 @@ public struct BackgroundFileDialogNavigator {
 
     private func open(_ folder: URL, steps: inout [String]) async throws {
         let name = Self.displayName(folder)
-        guard let item = try self.panel.item(atPath: folder.path), item.isDirectory else {
+        // The file list reloads asynchronously after the folder changes.
+        var found = try self.panel.item(atPath: folder.path)
+        try await self.waitUntil {
+            if found == nil { found = try self.panel.item(atPath: folder.path) }
+            return found != nil
+        }
+        guard let item = found, item.isDirectory else {
             throw self.failure(
                 .folderUnreachable,
                 "The panel's file list does not show the folder \(folder.path).",

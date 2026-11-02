@@ -14,7 +14,10 @@ final class FakeSavePanel: FileDialogPanelSurface {
 
     static let computerName = "Test Mac"
 
-    var directory: URL
+    var directory: URL {
+        didSet { self.lookupsSinceFolderChange = 0 }
+    }
+
     var name: String
     var mode: Mode
     private(set) var savedURL: URL?
@@ -26,6 +29,9 @@ final class FakeSavePanel: FileDialogPanelSurface {
     var unselectablePaths: Set<String> = []
     /// Items the list does not expose at all.
     var hiddenPaths: Set<String> = []
+    /// How many file-list lookups return nothing after the folder changes (the list reloads asynchronously).
+    var listReloadLookups = 0
+    private var lookupsSinceFolderChange = 0
     /// When true, pressing the default button with a folder selected does nothing.
     var ignoresFolderOpen = false
     /// When true, the final save leaves the panel open (as a "Replace?" alert would).
@@ -77,6 +83,8 @@ final class FakeSavePanel: FileDialogPanelSurface {
 
     func item(atPath path: String) throws -> FileDialogPanelItem? {
         guard !self.hiddenPaths.contains(path) else { return nil }
+        self.lookupsSinceFolderChange += 1
+        guard self.lookupsSinceFolderChange > self.listReloadLookups else { return nil }
         let url = URL(fileURLWithPath: path)
         var isDirectory: ObjCBool = false
         guard url.deletingLastPathComponent().path == self.directory.path,

@@ -131,4 +131,17 @@ struct BackgroundFileDialogNavigatorTests {
             #expect(error.changedPanel)
         }
     }
+
+    @Test
+    func `the file list may fill in after the folder changes`() async throws {
+        let tree = try TemporaryFolderTree(["run/decoy", "run/exports/inner"])
+        defer { tree.remove() }
+        let panel = FakeSavePanel(directory: tree.url("run/decoy"), mode: .list)
+        panel.listReloadLookups = 3
+
+        let report = try await BackgroundFileDialogNavigator(panel: panel).run(
+            FileDialogDestination(directory: tree.url("run/exports/inner"), filename: "q3.txt"))
+
+        #expect(report.savedPath == tree.url("run/exports/inner").appendingPathComponent("q3.txt").path)
+    }
 }
