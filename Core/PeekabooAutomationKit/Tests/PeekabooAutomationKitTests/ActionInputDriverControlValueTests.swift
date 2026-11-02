@@ -168,7 +168,7 @@ struct ActionInputDriverControlValueTests {
                 try onStep?(action, element)
             }
         }
-        await Self.expectPartialStep(element, to: 34, mentioning: "stopped at 4")
+        await Self.expectPartialStep(element, to: 34, mentioning: "stopped at 4 before reaching 34 after 4 steps")
         #expect(element.performedActions.count == 4)
     }
 
@@ -189,6 +189,8 @@ struct ActionInputDriverControlValueTests {
             Issue.record("Expected stepping to \(target) to fail")
         } catch let failure as DesktopActionFailure {
             #expect(failure.outcome.state == .partial)
+            // set_value is one logical value mutation (the Bridge allows exactly one unit); steps go in the message.
+            #expect(failure.outcome.dispatchState.unitCount == .one)
             #expect(failure.message.contains(text))
         } catch {
             Issue.record("Unexpected error: \(error)")

@@ -910,8 +910,7 @@ struct ActionInputDriver: ActionInputDriving {
             }
             guard steps < Self.maximumValueSteps else {
                 throw Self.stepFailure(
-                    "The stepper reached \(Self.describe(next)) after \(steps) steps without reaching " +
-                        Self.describe(target),
+                    "The stepper reached \(Self.describe(next)) without reaching \(Self.describe(target))",
                     steps: steps,
                     cause: stepError)
             }
@@ -919,11 +918,13 @@ struct ActionInputDriver: ActionInputDriving {
         }
     }
 
+    /// A stepper failure is reported as one logical value mutation, like its success: the Bridge contract binds
+    /// set-value to exactly one accessibilityValue unit. The physical step count goes in the message.
     private static func stepFailure(_ message: String, steps: Int, cause: ActionInputError?) -> DesktopActionFailure {
         .partial(
             delivery: self.accessibilityValueDelivery,
-            unitCount: DesktopActionOutcome.DispatchUnitCount(steps),
-            message: message + ".",
+            unitCount: .one,
+            message: message + " after \(steps) step\(steps == 1 ? "" : "s").",
             hint: "Observe the stepper before setting it again.",
             causeDescription: cause?.localizedDescription)
     }
