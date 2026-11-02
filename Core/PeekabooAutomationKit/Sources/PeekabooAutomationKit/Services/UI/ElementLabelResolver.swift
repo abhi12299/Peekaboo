@@ -38,6 +38,10 @@ import Foundation
         identifierCleaner: (String) -> String)
         -> String?
     {
+        if self.isTextContainerRole(info.role) {
+            return self.textContainerLabel(info: info, childTexts: childTexts)
+        }
+
         let baseLabel = ElementLabelResolver.firstNonGeneric(
             candidates: [
                 info.label,
@@ -70,6 +74,9 @@ import Foundation
     }
 
     @_spi(Testing) public static func needsChildTexts(info: ElementLabelInfo) -> Bool {
+        if self.isTextContainerRole(info.role) {
+            return self.ownTextContainerLabel(info: info) == nil
+        }
         guard info.role.lowercased() == "axbutton" else {
             return false
         }
@@ -88,6 +95,26 @@ import Foundation
         }
 
         return true
+    }
+
+    /// Table cells carry no text of their own; their content lives in static-text descendants.
+    /// Chromium clips those descendants to the viewport, so below the fold the cell is the only
+    /// published node that can hold the text.
+    private static func isTextContainerRole(_ role: String) -> Bool {
+        role.lowercased() == "axcell"
+    }
+
+    /// A cell's role description ("cell") names the role, not the content, so it never labels the cell.
+    private static func ownTextContainerLabel(info: ElementLabelInfo) -> String? {
+        self.firstNonGeneric(candidates: [info.label, info.title, info.description, info.value])
+    }
+
+    private static func textContainerLabel(info: ElementLabelInfo, childTexts: [String]) -> String? {
+        if let ownLabel = self.ownTextContainerLabel(info: info) {
+            return ownLabel
+        }
+        let texts = childTexts.compactMap(self.normalize)
+        return texts.isEmpty ? nil : texts.joined(separator: " ")
     }
 
     private static func firstNonGeneric(candidates: [String?]) -> String? {
