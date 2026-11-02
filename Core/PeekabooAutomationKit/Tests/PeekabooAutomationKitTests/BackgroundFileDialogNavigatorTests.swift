@@ -82,4 +82,22 @@ struct BackgroundFileDialogNavigatorTests {
         }
         #expect(panel.savedURL == nil)
     }
+
+    @Test
+    func `a folder that does not open stops the run instead of saving in the wrong folder`() async throws {
+        let tree = try TemporaryFolderTree(["run/decoy", "run/exports"])
+        defer { tree.remove() }
+        let panel = FakeSavePanel(directory: tree.url("run/decoy"), mode: .icon)
+        panel.ignoresFolderOpen = true
+
+        do {
+            _ = try await BackgroundFileDialogNavigator(panel: panel, timeout: .milliseconds(200)).run(
+                FileDialogDestination(directory: tree.url("run/exports"), filename: "q3.txt"))
+            Issue.record("expected the run to stop")
+        } catch let error as BackgroundFileDialogError {
+            #expect(error.kind == .wrongFolder)
+        }
+        #expect(panel.savedURL == nil)
+        #expect(panel.isOpen)
+    }
 }

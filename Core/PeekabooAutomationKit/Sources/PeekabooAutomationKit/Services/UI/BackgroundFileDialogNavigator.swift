@@ -97,6 +97,7 @@ public struct BackgroundFileDialogNavigator {
         }
         if let directory = destination.directory {
             try await self.navigate(to: directory, steps: &steps)
+            try self.requireCurrentFolder(directory)
         }
         try self.panel.pressDefaultButton()
         steps.append("default_button")
@@ -161,10 +162,21 @@ public struct BackgroundFileDialogNavigator {
                 "The panel closed while opening \(folder.path); it may have saved into the previous folder.",
                 changed: true)
         }
+        try self.requireCurrentFolder(folder)
         steps.append("open:\(name)")
     }
 
     // MARK: - Helpers
+
+    private func requireCurrentFolder(_ folder: URL) throws {
+        let current = try self.panel.currentFolderName()
+        guard current == Self.displayName(folder) else {
+            throw self.failure(
+                .wrongFolder,
+                "The panel shows the folder '\(current ?? "unknown")' instead of \(folder.path); nothing was saved.",
+                changed: true)
+        }
+    }
 
     /// The folders from the volume root down to `directory`, the way the panel's Where menu presents them.
     static func folderChain(to directory: URL) -> [URL] {

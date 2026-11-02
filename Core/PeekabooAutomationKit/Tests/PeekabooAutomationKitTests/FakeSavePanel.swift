@@ -26,6 +26,8 @@ final class FakeSavePanel: FileDialogPanelSurface {
     var unselectablePaths: Set<String> = []
     /// Items the list does not expose at all.
     var hiddenPaths: Set<String> = []
+    /// When true, pressing the default button with a folder selected does nothing.
+    var ignoresFolderOpen = false
 
     init(directory: URL, name: String = "Untitled.txt", mode: Mode = .icon) {
         self.directory = directory.resolvingSymlinksInPath()
@@ -104,6 +106,7 @@ final class FakeSavePanel: FileDialogPanelSurface {
         self.events.append("press default")
         guard !self.name.isEmpty else { return }
         if let selected = self.selected, (try? selected.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
+            if self.ignoresFolderOpen { return }
             self.directory = selected
             self.selected = nil
             return
