@@ -81,3 +81,14 @@ import Foundation
         return displays.prefix(Int(count)).map(CGDisplayBounds)
     }
 }
+
+extension DesktopObservationService {
+    func coveredWindowWarning(for capture: CaptureResult) -> String? {
+        guard capture.metadata.mode == .window,
+              let processIdentifier = capture.metadata.applicationInfo?.processIdentifier,
+              let rawWindowID = capture.metadata.windowInfo?.windowID,
+              let windowID = CGWindowID(exactly: rawWindowID)
+        else { return nil }
+        return self.coveredWindowCaptureWarning(processIdentifier, windowID)
+    }
+}

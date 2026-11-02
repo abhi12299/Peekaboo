@@ -4,7 +4,7 @@ import PeekabooAutomationKitTestSupport
 import PeekabooFoundation
 import PeekabooFoundationTestSupport
 import XCTest
-@testable import PeekabooAutomationKit
+@testable @_spi(Testing) import PeekabooAutomationKit
 
 @MainActor
 final class DesktopObservationServiceTests: XCTestCase {
@@ -1103,6 +1103,49 @@ extension DesktopObservationServiceTests {
         XCTAssertEqual(result.elements?.metadata.truncationInfo?.deadlineReached, true)
         XCTAssertTrue(result.diagnostics.warnings
             .contains(where: { $0.contains("missing text does not prove absence") }))
+    }
+
+    func testCoveredChromiumWindowCaptureCarriesStaleScreenshotWarning() async throws {
+        let app = Self.app()
+        let window = Self.window(
+            id: 106,
+            title: "Covered page",
+            bounds: CGRect(x: 200, y: 93, width: 1000, height: 800))
+        var checked: [String] = []
+        let service = DesktopObservationService(
+            screenCapture: RecordingScreenCaptureService(result: Self.captureResult(app: app, window: window)),
+            automation: RecordingUIAutomationService(),
+            applications: RecordingApplicationService(applications: [app], windows: [window]))
+        service.coveredWindowCaptureWarning = { pid, windowID in
+            checked.append("\(pid)/\(windowID)")
+            return CoveredWindowCapturePolicy.staleCaptureWarning
+        }
+
+        let result = try await service.observe(DesktopObservationRequest(
+            target: .app(identifier: "Fixture", window: .automatic),
+            detection: DesktopDetectionOptions(mode: .none)))
+
+        XCTAssertEqual(checked, ["123/106"])
+        XCTAssertTrue(result.diagnostics.warnings.contains(CoveredWindowCapturePolicy.staleCaptureWarning))
+    }
+
+    func testUncoveredWindowCaptureHasNoStaleScreenshotWarning() async throws {
+        let app = Self.app()
+        let window = Self.window(
+            id: 107,
+            title: "Visible page",
+            bounds: CGRect(x: 200, y: 93, width: 1000, height: 800))
+        let service = DesktopObservationService(
+            screenCapture: RecordingScreenCaptureService(result: Self.captureResult(app: app, window: window)),
+            automation: RecordingUIAutomationService(),
+            applications: RecordingApplicationService(applications: [app], windows: [window]))
+        service.coveredWindowCaptureWarning = { _, _ in nil }
+
+        let result = try await service.observe(DesktopObservationRequest(
+            target: .app(identifier: "Fixture", window: .automatic),
+            detection: DesktopDetectionOptions(mode: .none)))
+
+        XCTAssertFalse(result.diagnostics.warnings.contains(CoveredWindowCapturePolicy.staleCaptureWarning))
     }
 
     func testReadOnlySlowDetectionDoesNotBlockAnotherObservationCapture() async throws {
