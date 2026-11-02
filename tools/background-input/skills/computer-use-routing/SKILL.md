@@ -20,6 +20,8 @@ It works in the background: the user keeps the cursor, keyboard and front app.
 - Actions that carry a `snapshot` append a fresh look at the window when delivery is unverified. Read it instead of calling `see`/`window list`/`dialog list` again. "Unverified" is not a failure: don't retry blindly.
 - "Window N is no longer open" means it closed; if a dialog or sheet is named, answer it with `dialog`. After `window close`, "No dialog or sheet is open" means done.
 - Hotkeys (Cmd+S, Cmd+W, Cmd+Q, …) work through `press`. Prefer `window close`/`app quit` when you need a confirmed result.
-- A refusal that shows captured vs now bounds: take a fresh `see`. Right after a Space switch, wait a few seconds before acting. Keyboard and accessibility actions work on windows on other Spaces; point clicks may not.
+- A refusal that shows captured vs now bounds: take a fresh `see`. Right after a Space switch, wait a few seconds before acting. Keyboard, `press` and element (accessibility) clicks work on windows on other Spaces; point clicks on an off-Space Chrome or Electron window are refused, so use element IDs there.
+- "Screenshot may be stale:" means the window is covered or on another Space and stopped repainting. Trust the element text from `see` over the pixels.
+- `set_value` sets date pickers, steppers and combo boxes directly; prefer it to clicking their arrows.
 - If a launched app's window is minimized, `window restore` before `see`.
 - Close windows and quit apps you opened.
