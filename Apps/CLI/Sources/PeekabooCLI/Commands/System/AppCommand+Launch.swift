@@ -193,7 +193,16 @@ extension AppCommand {
                 if !request.openURLs.isEmpty, outcome?.state != .confirmedNoChange {
                     let documents = request.openURLs.map { $0.isFileURL ? $0.path : $0.absoluteString }
                         .joined(separator: ", ")
-                    let activation = request.activates ? "" : " without activating it"
+                    // One dispatch for the open, plus one per hand-back after the app activated itself.
+                    let handBacks = max(0, (outcome?.dispatchState.unitCount?.rawValue ?? 1) - 1)
+                    let activation = if request.activates {
+                        ""
+                    } else if handBacks > 0 {
+                        "; \(app.name) activated itself and the front app was handed back "
+                            + (handBacks == 1 ? "once" : "\(handBacks) times")
+                    } else {
+                        " without activating it"
+                    }
                     print("✓ Opened \(documents) in \(app.name) (PID: \(app.processIdentifier))\(activation)")
                 } else if outcome?.state == .confirmedNoChange || (outcome == nil && !request.activates) {
                     // A legacy host without canonical outcomes cannot cold-launch in the background.
