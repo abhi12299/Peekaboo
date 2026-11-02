@@ -71,4 +71,79 @@ struct MCPSetValueSnapshotReuseTests {
         #expect(fixture.automation.setValueCalls == 1)
         #expect(response.meta?.objectValue?[Self.reusableKey] == .bool(true))
     }
+
+    @Test(arguments: ["added", "moved", "role"])
+    func `a value write that reshapes the window leaves the snapshot stale`(change: String) async throws {
+        var after = Self.form
+        switch change {
+        case "added": after.append(Self.element("elem_3", "AXTextField", y: 152))
+        case "moved": after[1] = Self.element("elem_1", "AXDateTimeArea", y: 90)
+        default: after[2] = Self.element("elem_2", "AXPopUpButton", y: 108)
+        }
+        let fixture = try await Self.fixture(after: after)
+
+        let response = try await Self.setValue(fixture)
+
+        #expect(!response.isError)
+        #expect(fixture.automation.accessibilityTreeReads == 1)
+        #expect(response.meta?.objectValue?[Self.reusableKey] == nil)
+    }
+
+    @Test
+    func `a window that cannot be read again leaves the snapshot stale`() async throws {
+        let fixture = try await Self.fixture(after: Self.form)
+        fixture.automation.accessibilityTree = nil
+
+        let response = try await Self.setValue(fixture)
+
+        #expect(!response.isError)
+        #expect(response.meta?.objectValue?[Self.reusableKey] == nil)
+    }
+
+    @Test
+    func `a batch of value writes that keep the window's structure runs to the end`() async throws {
+        let fixture = try await Self.fixture(after: Self.form)
+
+        let response = try await fixture.context.execute(
+            tool: BatchTool(context: fixture.context),
+            arguments: ToolArguments(raw: [
+                "snapshot": fixture.snapshotID,
+                "observe_after": false,
+                "steps": [
+                    ["tool": "set_value", "args": ["on": "T1", "value": "34"]],
+                    ["tool": "set_value", "args": ["on": "T1", "value": "2027-03-15"]],
+                    ["tool": "set_value", "args": ["on": "T1", "value": "EUR"]],
+                ],
+            ]))
+
+        #expect(!response.isError, "\(Self.text(response))")
+        #expect(fixture.automation.setValueCalls == 3)
+        #expect(Self.text(response).contains("Ran all 3 steps."))
+    }
+
+    @Test
+    func `a batch stops after a value write that reshapes the window`() async throws {
+        let fixture = try await Self.fixture(after: Self.form + [Self.element("elem_3", "AXTextField", y: 152)])
+
+        let response = try await fixture.context.execute(
+            tool: BatchTool(context: fixture.context),
+            arguments: ToolArguments(raw: [
+                "snapshot": fixture.snapshotID,
+                "steps": [
+                    ["tool": "set_value", "args": ["on": "T1", "value": "34"]],
+                    ["tool": "set_value", "args": ["on": "T1", "value": "EUR"]],
+                ],
+            ]))
+
+        #expect(response.isError)
+        #expect(fixture.automation.setValueCalls == 1)
+        #expect(Self.text(response).contains("is stale after step 1 (set_value)"))
+    }
+
+    private static func text(_ response: ToolResponse) -> String {
+        response.content.compactMap { content -> String? in
+            guard case let .text(text, _, _) = content else { return nil }
+            return text
+        }.joined(separator: "\n")
+    }
 }
