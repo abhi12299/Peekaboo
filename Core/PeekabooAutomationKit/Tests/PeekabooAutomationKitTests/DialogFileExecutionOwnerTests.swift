@@ -64,8 +64,9 @@ struct DialogFileExecutionOwnerTests {
 
     @Test
     func `a sheet reached through its parent and its own window is one dialog candidate`() throws {
-        // A Save sheet has its own WindowServer window ("Save") next to its parent ("Exporter"); both resolve to
-        // the parent's AX window and the same sheet, which made `dialog file --pid` ambiguous.
+        // A Save sheet has its own WindowServer window ("Save") next to its parent ("Exporter"). The sheet's
+        // window resolves to the AXSheet itself, the parent's to the AXWindow holding it; both find the same
+        // sheet, which made `dialog file --pid` ambiguous (seen live on BenchFixture).
         let parent = Element(
             AXUIElementCreateApplication(-1),
             attributes: ["AXTitle": .string("Exporter")],
@@ -78,7 +79,7 @@ struct DialogFileExecutionOwnerTests {
             DialogService.TargetedDialogCandidate(
                 target: sheetWindow,
                 resolvedTarget: FileExecutionOwnerFixture.evidence(target: sheetWindow, title: "Save"),
-                window: parent,
+                window: sheet,
                 dialog: sheet),
             DialogService.TargetedDialogCandidate(
                 target: parentWindow,
