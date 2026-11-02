@@ -76,6 +76,40 @@ struct MCPDialogPreparedActionTests {
     }
 
     @Test
+    func `background-only targeted dialog file runs as a background accessibility request`() async throws {
+        let application = ServiceApplicationInfo(
+            processIdentifier: 89,
+            processStartIdentity: 890,
+            bundleIdentifier: "dev.peekaboo.benchfixture",
+            name: "BenchFixture")
+        let dialogs = PreparedDialogService()
+        dialogs.fileOutcome = .confirmedChange(
+            delivery: .init(mechanism: .accessibilityAction, mode: .background),
+            unitCount: .init(4))
+        let context = await MCPToolTestHelpers.makeContext(
+            applications: MockApplicationService(applications: [application]),
+            dialogs: dialogs,
+            executionPolicy: .backgroundOnly)
+
+        let response = try await context.execute(
+            tool: DialogTool(context: context),
+            arguments: ToolArguments(raw: [
+                "action": "file",
+                "pid": 89,
+                "path": "/tmp/exports",
+                "name": "q3.txt",
+            ]))
+
+        #expect(!response.isError)
+        let request = try #require(dialogs.lastExactFileRequest)
+        #expect(request.background)
+        #expect(request.target.processIdentifier == 89)
+        #expect(request.path == "/tmp/exports")
+        #expect(request.filename == "q3.txt")
+        #expect(dialogs.fileCount == 1)
+    }
+
+    @Test
     func `background-only targetless dialog click refuses before service planning`() async throws {
         let dialogs = PreparedDialogService()
         let context = await MCPToolTestHelpers.makeContext(

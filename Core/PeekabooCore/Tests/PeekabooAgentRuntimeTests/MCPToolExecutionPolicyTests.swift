@@ -185,6 +185,7 @@ struct MCPToolExecutionPolicyTests {
             .init(tool: "dialog", arguments: ["action": "list", "foreground": false]),
             .init(tool: "dialog", arguments: ["action": "click", "button": "OK", "app": "TextEdit"]),
             .init(tool: "dialog", arguments: ["action": "dismiss", "pid": 42]),
+            .init(tool: "dialog", arguments: ["action": "file", "pid": 42, "path": "/tmp", "name": "a.txt"]),
             .init(tool: "dock", arguments: ["action": "list"]),
             .init(tool: "space", arguments: ["action": "list"]),
             .init(tool: "space", arguments: [

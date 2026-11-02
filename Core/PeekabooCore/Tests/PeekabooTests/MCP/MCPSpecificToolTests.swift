@@ -216,7 +216,7 @@ struct MCPSpecificToolTests {
         let tool = makeTestTool(DialogTool.init)
         let requests: [([String: Any], String)] = [
             (["action": "input", "text": "hello"], "Targetless dialog input"),
-            (["action": "file", "path": "/tmp"], "Dialog file"),
+            (["action": "file", "path": "/tmp"], "Targetless dialog file"),
             (["action": "dismiss", "force": true], "Forced dialog dismiss"),
         ]
 

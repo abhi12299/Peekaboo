@@ -40,7 +40,8 @@ enum DialogToolInputError: LocalizedError {
             case .input:
                 "Targetless dialog input uses global keyboard input and requires foreground=true."
             case .file:
-                "Dialog file uses global keyboard/coordinate input and requires foreground=true."
+                "Targetless dialog file uses global keyboard input and requires foreground=true; pass app, pid or " +
+                    "window_id to drive the panel in the background."
             case .dismiss:
                 "Forced dialog dismiss sends global Escape and requires foreground=true."
             case .click, .list:

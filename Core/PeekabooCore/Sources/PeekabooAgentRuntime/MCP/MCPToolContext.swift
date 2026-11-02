@@ -974,7 +974,8 @@ extension MCPToolContext {
         guard !detectionResult.metadata.isDialog else {
             return refused(self.executionPolicy.unresolvedTargetRejection(
                 toolName: toolName,
-                detail: "dialog mutation is unavailable until an exact dialog ownership receipt is preserved"))
+                detail: "snapshot-based input into a dialog is unavailable; use the dialog tool instead (action " +
+                    "file with path and name for Open/Save panels, click or input for other dialogs)"))
         }
         let applicationBundleIdentifier = Self.nonEmpty(windowContext.applicationBundleId)
         let applicationName = Self.nonEmpty(windowContext.applicationName)
