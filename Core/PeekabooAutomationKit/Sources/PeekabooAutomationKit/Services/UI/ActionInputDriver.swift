@@ -860,8 +860,11 @@ struct ActionInputDriver: ActionInputDriving {
         let observationTarget = try await self.observationTarget(element)
         var current = start
         var steps = 0
+        // The snapshot receipt is validated once; after that every step's readback re-checks the process generation
+        // and the element's identity, so a replaced or moved stepper stops the loop.
+        try Self.validateBeforeMutation(beforeMutation)
         while true {
-            try Self.validateBeforeMutation(beforeMutation)
+            try Task.checkCancellation()
             var stepError: ActionInputError?
             do {
                 try element.performAutomationAction(action)

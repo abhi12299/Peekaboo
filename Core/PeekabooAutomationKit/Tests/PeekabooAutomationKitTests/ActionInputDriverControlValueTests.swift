@@ -112,6 +112,20 @@ struct ActionInputDriverControlValueTests {
             actionName: result.actionName) == true)
     }
 
+    @Test
+    func `stepper validates its snapshot target once, then trusts the per-step identity readback`() async throws {
+        let element = Self.stepper(value: 1)
+        var validations = 0
+
+        _ = try await ActionInputDriver().trySetValueForTesting(
+            element: element,
+            value: .int(34),
+            beforeMutation: { validations += 1 })
+
+        #expect(element.performedActions.count == 33)
+        #expect(validations == 1)
+    }
+
     @Test(arguments: [UIElementValue.int(0), .int(51), .string("many")])
     func `stepper refuses a value it cannot hold before stepping`(value: UIElementValue) async {
         let element = Self.stepper(value: 1)
