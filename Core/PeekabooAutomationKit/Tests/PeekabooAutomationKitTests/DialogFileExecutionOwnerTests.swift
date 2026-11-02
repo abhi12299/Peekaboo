@@ -36,6 +36,33 @@ struct DialogFileExecutionOwnerTests {
     }
 
     @Test
+    func `background file execution saves through the panel and reports a background accessibility outcome`()
+        async throws
+    {
+        let fixture = try FileExecutionOwnerFixture()
+        let tree = try TemporaryFolderTree(["run/decoy", "run/exports"])
+        defer { tree.remove() }
+        let panel = FakeSavePanel(directory: tree.url("run/decoy"))
+        let request = try DialogFileExecutionRequest(
+            target: DialogTargetSelector(processIdentifier: 42, windowID: 700),
+            path: tree.url("run/exports").path,
+            filename: "q3.txt",
+            background: true)
+
+        let result = try await fixture.service().executeBackgroundFileDialog(
+            request, resolution: fixture.resolution(), surface: panel)
+
+        let expected = tree.url("run/exports").appendingPathComponent("q3.txt").path
+        #expect(result.success)
+        #expect(result.action == .handleFileDialog)
+        #expect(result.outcome?.state == .confirmedChange)
+        #expect(result.outcome?.delivery == .init(mechanism: .accessibilityAction, mode: .background))
+        #expect(result.details["saved_path"] == expected)
+        #expect(result.details["saved_path_verified"] == "true")
+        #expect(result.targetWindowIdentity == fixture.target.identity)
+    }
+
+    @Test
     func `file execution refuses missing parent or selector evidence before dispatch`() throws {
         let fixture = try FileExecutionOwnerFixture()
         var missingParent = try fixture.resolution()

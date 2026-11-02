@@ -30,7 +30,10 @@ extension DialogService {
     }
 
     public func handleFileDialog(_ request: DialogFileExecutionRequest) async throws -> DialogActionResult {
-        try await self.executeFileDialog(
+        if request.background {
+            return try await self.handleBackgroundFileDialog(request)
+        }
+        return try await self.executeFileDialog(
             options: .init(
                 path: request.path,
                 filename: request.filename,
