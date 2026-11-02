@@ -57,6 +57,45 @@ struct ActionInputDriverControlValueTests {
         }
         #expect(element.setDates.isEmpty)
     }
+
+    /// An NSStepper: AXIncrementor whose AXValue is read-only and moves by `step` per AXIncrement/AXDecrement.
+    static func stepper(value: Double, min: Double = 1, max: Double = 50, step: Double = 1)
+        -> ActionInputMockAutomationElement
+    {
+        let element = ActionInputMockAutomationElement(
+            role: AXRoleNames.kAXIncrementorRole,
+            frame: CGRect(x: 214, y: 152, width: 20, height: 26),
+            value: NSNumber(value: value),
+            actionNames: ["AXIncrement", "AXDecrement"],
+            isValueSettable: false,
+            doubleAttributes: ["AXMinValue": min, "AXMaxValue": max])
+        element.onPerformedAction = { action, element in
+            let current = (element.value as? NSNumber)?.doubleValue ?? 0
+            let next = action == "AXIncrement" ? current + step : current - step
+            element.value = NSNumber(value: Swift.min(max, Swift.max(min, next)))
+        }
+        return element
+    }
+
+    @Test(arguments: [(1.0, 34, "AXIncrement"), (40.0, 3, "AXDecrement")])
+    func `stepper is stepped to the requested value and verified`(
+        start: Double,
+        target: Int,
+        action: String) async throws
+    {
+        let element = Self.stepper(value: start)
+
+        let result = try await ActionInputDriver().trySetValueForTesting(element: element, value: .int(target))
+
+        #expect((element.value as? NSNumber)?.intValue == target)
+        #expect(element.performedActions == Array(repeating: action, count: abs(target - Int(start))))
+        #expect(result.outcome.state == .confirmedChange)
+        #expect(result.valueVerification?.displayString == String(target))
+        #expect(result.valueVerification?.matches(
+            requested: .int(target),
+            newValue: String(target),
+            actionName: result.actionName) == true)
+    }
 }
 
 struct AXMutationDateReadbackTests {
