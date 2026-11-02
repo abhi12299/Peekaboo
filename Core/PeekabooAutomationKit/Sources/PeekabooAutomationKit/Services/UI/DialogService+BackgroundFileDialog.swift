@@ -12,12 +12,10 @@ extension DialogService {
     /// `BackgroundFileDialogNavigator` for the navigation rules.
     func handleBackgroundFileDialog(_ request: DialogFileExecutionRequest) async throws -> DialogActionResult {
         try await self.runDialogOperation(scope: .global, access: .write) {
-            let t0 = Date()
             // One discovery walk: column view makes each walk slow, and navigation re-checks the panel itself.
             let resolution = try await self.resolveFileDialogElementResolution(
                 target: request.target,
                 revalidate: false)
-            trace("resolve \(Date().timeIntervalSince(t0))")
             let surface = AXFileDialogPanelSurface(panel: resolution.element.underlyingElement)
             return try await self.executeBackgroundFileDialog(request, resolution: resolution, surface: surface)
         }
@@ -56,7 +54,6 @@ extension DialogService {
         if let filename = destination.filename {
             details["filename"] = filename
         }
-        trace("navigator done \(Date().timeIntervalSince(startedAt))")
         if let savedPath = report.savedPath {
             guard await Self.waitForSavedFile(savedPath, notBefore: startedAt) else {
                 throw DesktopActionFailure.indeterminate(

@@ -32,13 +32,11 @@ final class AXFileDialogPanelSurface: FileDialogPanelSurface {
     // MARK: Where popup
 
     func currentFolderName() throws -> String? {
-        let t0 = Date(); defer { trace("folder \(Date().timeIntervalSince(t0))") }
         guard let popup = self.control(Identifier.wherePopup) else { return nil }
         return self.stringValue(popup, kAXValueAttribute)
     }
 
     func openLocationMenu() throws -> [String] {
-        let t0 = Date(); defer { trace("menu.open \(Date().timeIntervalSince(t0))") }
         guard let popup = self.control(Identifier.wherePopup) else {
             throw AXFileDialogPanelSurfaceError("The panel has no Where popup (collapse or expand it and retry).")
         }
@@ -66,7 +64,6 @@ final class AXFileDialogPanelSurface: FileDialogPanelSurface {
     }
 
     func chooseLocationMenuItem(at index: Int) throws {
-        let t0 = Date(); defer { trace("menu.choose \(Date().timeIntervalSince(t0))") }
         guard self.openMenuItems.indices.contains(index) else {
             try self.cancelLocationMenu()
             throw AXFileDialogPanelSurfaceError("The Where menu has no location at position \(index).")
@@ -78,7 +75,6 @@ final class AXFileDialogPanelSurface: FileDialogPanelSurface {
     }
 
     func cancelLocationMenu() throws {
-        let t0 = Date(); defer { trace("menu.cancel \(Date().timeIntervalSince(t0))") }
         defer {
             self.openMenu = nil
             self.openMenuItems = []
@@ -90,7 +86,6 @@ final class AXFileDialogPanelSurface: FileDialogPanelSurface {
     // MARK: File list
 
     func item(atPath path: String) throws -> FileDialogPanelItem? {
-        let t0 = Date(); defer { trace("item \(path.suffix(30)) \(Date().timeIntervalSince(t0))") }
         let wanted = Self.normalized(path)
         if let found = self.fileListEntry(matching: wanted) {
             self.lastEntry = found
@@ -114,7 +109,6 @@ final class AXFileDialogPanelSurface: FileDialogPanelSurface {
     }
 
     func select(_ item: FileDialogPanelItem) throws -> Bool {
-        let t0 = Date(); defer { trace("select \(Date().timeIntervalSince(t0))") }
         let wanted = Self.normalized(item.path)
         let cached = self.lastEntry.flatMap { entry in
             entry.item.path == wanted && self.role(entry.element) != nil ? entry : nil
@@ -141,7 +135,6 @@ final class AXFileDialogPanelSurface: FileDialogPanelSurface {
     }
 
     func setFilename(_ name: String) throws {
-        let t0 = Date(); defer { trace("name \(Date().timeIntervalSince(t0))") }
         guard let field = self.nameField() else {
             throw AXFileDialogPanelSurfaceError("The panel has no Save As name field.")
         }
@@ -152,7 +145,6 @@ final class AXFileDialogPanelSurface: FileDialogPanelSurface {
     }
 
     func pressDefaultButton() throws {
-        let t0 = Date(); defer { trace("press \(Date().timeIntervalSince(t0))") }
         let button = self.control(Identifier.defaultButton)
             ?? self.elementAttribute(self.panel, kAXDefaultButtonAttribute)
         guard let button else {
@@ -378,11 +370,5 @@ struct AXFileDialogPanelSurfaceError: Error, LocalizedError {
 
     var errorDescription: String? {
         self.message
-    }
-}
-
-func trace(_ message: String) {
-    if ProcessInfo.processInfo.environment["PEEKABOO_FILE_DIALOG_TRACE"] == "1" {
-        FileHandle.standardError.write(Data("[fd-trace] \(message)\n".utf8))
     }
 }
