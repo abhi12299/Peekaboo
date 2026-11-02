@@ -245,7 +245,7 @@ extension MCPToolContext {
         guard identifiers.count == 1,
               let identifier = identifiers.first,
               !identifier.uppercased().hasPrefix("PID:"),
-              try await !self.applications.isApplicationRunning(identifier: identifier)
+              try await !self.isApplicationRunningForLaunch(identifier)
         else { return nil }
         if let rejection = self.executionPolicy.systemSurfaceRejection(
             toolName: toolName,
@@ -255,6 +255,19 @@ extension MCPToolContext {
             return BackgroundTargetAuthorization(arguments: arguments, rejection: rejection, targetPlan: nil)
         }
         return BackgroundTargetAuthorization(arguments: arguments, rejection: nil, targetPlan: nil)
+    }
+
+    /// A name shared by several running instances must reach the caller as that ambiguity, with the PIDs to
+    /// choose from, instead of the generic "could not be validated" refusal.
+    @MainActor
+    private func isApplicationRunningForLaunch(_ identifier: String) async throws -> Bool {
+        do {
+            return try await self.applications.isApplicationRunning(identifier: identifier)
+        } catch let error as PeekabooError {
+            guard case .ambiguousAppIdentifier = error else { throw error }
+            throw BackgroundTargetResolutionError(
+                "\(error.localizedDescription). Pass name as PID:<n> to pick one running instance.")
+        }
     }
 
     @MainActor
