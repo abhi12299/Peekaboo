@@ -96,6 +96,75 @@ struct ActionInputDriverControlValueTests {
             newValue: String(target),
             actionName: result.actionName) == true)
     }
+
+    @Test(arguments: [UIElementValue.int(0), .int(51), .string("many")])
+    func `stepper refuses a value it cannot hold before stepping`(value: UIElementValue) async {
+        let element = Self.stepper(value: 1)
+
+        do {
+            _ = try await ActionInputDriver().trySetValueForTesting(element: element, value: value)
+            Issue.record("Expected \(value) to be refused")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.dispatchState == .none)
+            #expect(failure.outcome.refusalReason == .invalidRequest)
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+        #expect(element.attemptedActions.isEmpty)
+    }
+
+    @Test
+    func `stepper keeps stepping when a step reports an error but the value moved`() async throws {
+        let element = Self.stepper(value: 1)
+        let onStep = element.onPerformedAction
+        element.onPerformedAction = { action, element in
+            try onStep?(action, element)
+            if element.performedActions.count == 33 {
+                throw AccessibilitySystemError(.cannotComplete)
+            }
+        }
+
+        let result = try await ActionInputDriver().trySetValueForTesting(element: element, value: .int(34))
+
+        #expect((element.value as? NSNumber)?.intValue == 34)
+        #expect(result.outcome.state == .confirmedChange)
+    }
+
+    @Test
+    func `stepper that stops moving is reported as a partial change`() async {
+        let element = Self.stepper(value: 1)
+        let onStep = element.onPerformedAction
+        element.onPerformedAction = { action, element in
+            if element.performedActions.count <= 3 {
+                try onStep?(action, element)
+            }
+        }
+        await Self.expectPartialStep(element, to: 34, mentioning: "stopped at 4")
+        #expect(element.performedActions.count == 4)
+    }
+
+    @Test
+    func `stepper whose step skips the value is reported as a partial change`() async {
+        let element = Self.stepper(value: 1, step: 2)
+        await Self.expectPartialStep(element, to: 4, mentioning: "moved past 4 to 5")
+        #expect(element.performedActions.count == 2)
+    }
+
+    private static func expectPartialStep(
+        _ element: ActionInputMockAutomationElement,
+        to target: Int,
+        mentioning text: String) async
+    {
+        do {
+            _ = try await ActionInputDriver().trySetValueForTesting(element: element, value: .int(target))
+            Issue.record("Expected stepping to \(target) to fail")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .partial)
+            #expect(failure.message.contains(text))
+        } catch {
+            Issue.record("Unexpected error: \(error)")
+        }
+    }
 }
 
 struct AXMutationDateReadbackTests {

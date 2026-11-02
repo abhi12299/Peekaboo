@@ -837,15 +837,11 @@ struct ActionInputDriver: ActionInputDriving {
         }
         let minimum = element.doubleAttribute("AXMinValue")
         let maximum = element.doubleAttribute("AXMaxValue")
-        if let minimum, target < minimum || maximum.map({ target > $0 }) == true {
+        guard minimum.map({ target >= $0 }) ?? true, maximum.map({ target <= $0 }) ?? true else {
+            let range = "\(minimum.map(Self.describe) ?? "any value") to \(maximum.map(Self.describe) ?? "any value")"
             throw DesktopActionFailure.preDispatchRefusal(
                 reason: .invalidRequest,
-                message: "The stepper accepts \(Self.describe(minimum)) to \(maximum.map(Self.describe) ?? "any value"); " +
-                    "got \(Self.describe(target)).")
-        } else if let maximum, target > maximum {
-            throw DesktopActionFailure.preDispatchRefusal(
-                reason: .invalidRequest,
-                message: "The stepper accepts values up to \(Self.describe(maximum)); got \(Self.describe(target)).")
+                message: "The stepper accepts \(range); got \(Self.describe(target)).")
         }
         let verification = { (readback: ElementValueReadback) in
             ElementValueVerification(attribute: .value, resolvedKind: .double, readback: readback)
@@ -904,8 +900,8 @@ struct ActionInputDriver: ActionInputDriving {
             }
             guard increasing ? next < target : next > target else {
                 throw Self.stepFailure(
-                    "The stepper moved past \(Self.describe(target)) to \(Self.describe(next)); its step does not land " +
-                        "on the requested value",
+                    "The stepper moved past \(Self.describe(target)) to \(Self.describe(next)); " +
+                        "its step does not land on the requested value",
                     steps: steps,
                     cause: stepError)
             }
