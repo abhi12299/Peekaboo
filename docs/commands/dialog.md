@@ -57,7 +57,13 @@ automatic clicks require complete discovery, one dialog, and one enabled AXPress
     selected folder. In column view the selection alone moves the panel. AXOpen is never used: it activated the host
     app in testing. Icon view only exposes visible items, so the list is scrolled through its scroll bar's AXValue.
   - It sets the name through AXValue, checks the panel shows the requested folder and name, presses Save, and
-    verifies the file on disk. If the panel stays open (for example a Replace confirmation) the result says so.
+    verifies the file on disk (a file with an extension the panel hid also counts). If the panel stays open (for
+    example a Replace confirmation) the result says so. Without `--path` or `--name` it reads the folder (from the
+    Where menu) and the name from the panel; if the folder can't be mapped to a path the result is unverified.
+  - Open panels have no name field: it goes to the folder, selects the file named by `--path`/`--name` in the
+    list, presses Open and returns `opened_path`. An Open panel that can choose folders may choose a folder on the
+    way down instead of opening it; the run then reports that the panel closed early.
+  - When a folder and its parent share a name, the Where menu's full ancestry confirms each move.
   - The default button is pressed for a folder only after the panel confirms the selection, so a failed selection
     can't save into the wrong folder. Every failure after the first change is reported as indeterminate.
   - Limits: folders inside hidden folders (`/private`, dot-folders) can't be browsed to and are refused before the
