@@ -58,6 +58,21 @@ struct ActionInputDriverControlValueTests {
         #expect(element.setDates.isEmpty)
     }
 
+    @Test
+    func `date picker accepts the ISO instant that see displays`() async throws {
+        let element = ActionInputMockAutomationElement(
+            role: "AXDateTimeArea",
+            value: Date(timeIntervalSince1970: 1_793_500_000) as NSDate,
+            isValueSettable: true)
+
+        let result = try await ActionInputDriver().trySetValueForTesting(
+            element: element,
+            value: .string("2027-03-14T18:30:00.000Z"))
+
+        #expect(element.setDates == [Date(timeIntervalSince1970: 1_805_049_000)])
+        #expect(result.valueVerification?.displayString == "2027-03-14T18:30:00.000Z")
+    }
+
     /// An NSStepper: AXIncrementor whose AXValue is read-only and moves by `step` per AXIncrement/AXDecrement.
     static func stepper(value: Double, min: Double = 1, max: Double = 50, step: Double = 1)
         -> ActionInputMockAutomationElement

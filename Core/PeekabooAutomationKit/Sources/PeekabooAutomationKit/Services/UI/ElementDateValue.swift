@@ -7,7 +7,7 @@ import PeekabooFoundation
 /// compared at the precision the caller asked for:
 /// - `yyyy-MM-dd`: the picker's day changes and its time of day is kept;
 /// - `yyyy-MM-dd HH:mm` and `yyyy-MM-dd HH:mm:ss`: local time;
-/// - `yyyy-MM-ddTHH:mm:ssZ` or with an offset such as `+05:30`: an exact instant.
+/// - `yyyy-MM-ddTHH:mm:ssZ` (optionally with milliseconds) or with an offset such as `+05:30`: an exact instant.
 struct ElementDateValue {
     static let acceptedFormatsDescription =
         "a date such as 2027-03-15, a local time such as 2027-03-15 14:30, or an ISO 8601 instant such as " +
@@ -87,10 +87,13 @@ struct ElementDateValue {
         ]
         if let zone = self.isoTimeZone(of: text) {
             let suffix = text.hasSuffix("Z") ? "'Z'" : "xxxxx"
-            candidates.append(Candidate(
-                format: "yyyy-MM-dd'T'HH:mm:ss\(suffix)",
-                precision: .second,
-                timeZone: zone))
+            // `see` shows a date picker's value with milliseconds, so that spelling is accepted as well.
+            for seconds in ["ss", "ss.SSS"] {
+                candidates.append(Candidate(
+                    format: "yyyy-MM-dd'T'HH:mm:\(seconds)\(suffix)",
+                    precision: .second,
+                    timeZone: zone))
+            }
         }
         return candidates
     }
