@@ -25,7 +25,10 @@ extension DialogCommand {
         @Flag(name: .long, help: "Ensure file dialogs are expanded (Show Details) before setting --path")
         var ensureExpanded = false
 
-        @Flag(help: "Focus the file dialog before keyboard or coordinate interaction")
+        @Flag(
+            help: "Focus the file dialog and use keyboard navigation. Without it, a targeted panel (--app, --pid or " +
+                "--window-id) is driven in the background through accessibility."
+        )
         var foreground = false
 
         @Option(name: .customLong("timeout"), help: "File-dialog timeout (bare values are milliseconds; default 20s)")
@@ -42,6 +45,7 @@ extension DialogCommand {
             let name = self.name
             let select = self.select
             let ensureExpanded = self.ensureExpanded
+            let background = !self.foreground
             let dialogTarget = try self.target.dialogTargetSelector()
             let fileFocus = DialogForegroundFocusPolicy(
                 autoFocus: self.focusOptions.autoFocus,
@@ -58,9 +62,10 @@ extension DialogCommand {
                 resolveAppHint: !dialogTarget.hasTarget,
                 handlesPeekabooError: true,
                 validate: {
-                    guard self.foreground else {
+                    guard !background || dialogTarget.hasTarget else {
                         throw ValidationError(
-                            "dialog file uses keyboard/coordinate interaction and requires --foreground"
+                            "targetless dialog file uses keyboard/coordinate interaction and requires --foreground; " +
+                                "pass --app, --pid or --window-id to drive the panel in the background"
                         )
                     }
                 },
@@ -77,7 +82,8 @@ extension DialogCommand {
                                 filename: name,
                                 actionButton: select,
                                 ensureExpanded: ensureExpanded,
-                                focus: fileFocus
+                                focus: fileFocus,
+                                background: background
                             ))
                         }
                         return try await context.services.dialogs.handleFileDialog(
