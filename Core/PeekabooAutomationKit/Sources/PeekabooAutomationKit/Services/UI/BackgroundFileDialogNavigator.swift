@@ -168,7 +168,15 @@ public struct BackgroundFileDialogNavigator {
                 "The panel's file list does not show the folder \(folder.path).",
                 changed: true)
         }
-        guard try self.panel.select(item) else {
+        // A column that has just appeared may ignore the first selection; look the entry up again and retry.
+        var selected = try self.panel.select(item)
+        try await self.waitUntil {
+            if !selected, let current = try self.panel.item(atPath: folder.path), current.isDirectory {
+                selected = try self.panel.select(current)
+            }
+            return selected
+        }
+        guard selected else {
             throw self.failure(
                 .selectionNotConfirmed,
                 "The panel did not confirm the selection of \(folder.path); the default button was not pressed.",

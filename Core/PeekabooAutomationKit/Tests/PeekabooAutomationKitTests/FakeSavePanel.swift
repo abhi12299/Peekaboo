@@ -27,6 +27,8 @@ final class FakeSavePanel: FileDialogPanelSurface {
     private var menuOpen = false
     /// Items the panel refuses to select (selection silently does nothing).
     var unselectablePaths: Set<String> = []
+    /// How many selections are ignored before the panel takes one (a column that is still loading).
+    var ignoredSelections = 0
     /// Items the list does not expose at all.
     var hiddenPaths: Set<String> = []
     /// How many file-list lookups return nothing after the folder changes (the list reloads asynchronously).
@@ -96,6 +98,10 @@ final class FakeSavePanel: FileDialogPanelSurface {
     func select(_ item: FileDialogPanelItem) throws -> Bool {
         self.events.append("select \(URL(fileURLWithPath: item.path).lastPathComponent)")
         guard !self.unselectablePaths.contains(item.path) else { return false }
+        if self.ignoredSelections > 0 {
+            self.ignoredSelections -= 1
+            return false
+        }
         if self.mode == .column, item.isDirectory {
             self.directory = URL(fileURLWithPath: item.path)
             self.selected = nil

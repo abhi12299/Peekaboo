@@ -14,9 +14,13 @@ final class AXFileDialogPanelSurface: FileDialogPanelSurface {
         static let wherePopup = "where popup"
         static let nameField = "saveAsNameTextField"
         static let defaultButton = "OKButton"
+        /// The file list in icon, list and column view.
+        static let fileLists = ["IconView", "ListView", "ColumnView"]
     }
 
     private let panel: AXUIElement
+    private var controls: [String: AXUIElement] = [:]
+    private var lastEntry: Entry?
     private var openMenuItems: [AXUIElement] = []
     private var openMenu: AXUIElement?
     private let maximumNodes = 6000
@@ -28,14 +32,14 @@ final class AXFileDialogPanelSurface: FileDialogPanelSurface {
     // MARK: Where popup
 
     func currentFolderName() throws -> String? {
-        guard let popup = self.firstDescendant(where: { self.identifier($0) == Identifier.wherePopup }) else {
-            return nil
-        }
+        let t0 = Date(); defer { trace("folder \(Date().timeIntervalSince(t0))") }
+        guard let popup = self.control(Identifier.wherePopup) else { return nil }
         return self.stringValue(popup, kAXValueAttribute)
     }
 
     func openLocationMenu() throws -> [String] {
-        guard let popup = self.firstDescendant(where: { self.identifier($0) == Identifier.wherePopup }) else {
+        let t0 = Date(); defer { trace("menu.open \(Date().timeIntervalSince(t0))") }
+        guard let popup = self.control(Identifier.wherePopup) else {
             throw AXFileDialogPanelSurfaceError("The panel has no Where popup (collapse or expand it and retry).")
         }
         try self.perform(kAXPressAction, on: popup, what: "open the Where popup")
@@ -62,6 +66,7 @@ final class AXFileDialogPanelSurface: FileDialogPanelSurface {
     }
 
     func chooseLocationMenuItem(at index: Int) throws {
+        let t0 = Date(); defer { trace("menu.choose \(Date().timeIntervalSince(t0))") }
         guard self.openMenuItems.indices.contains(index) else {
             try self.cancelLocationMenu()
             throw AXFileDialogPanelSurfaceError("The Where menu has no location at position \(index).")
@@ -73,6 +78,7 @@ final class AXFileDialogPanelSurface: FileDialogPanelSurface {
     }
 
     func cancelLocationMenu() throws {
+        let t0 = Date(); defer { trace("menu.cancel \(Date().timeIntervalSince(t0))") }
         defer {
             self.openMenu = nil
             self.openMenuItems = []
@@ -84,16 +90,22 @@ final class AXFileDialogPanelSurface: FileDialogPanelSurface {
     // MARK: File list
 
     func item(atPath path: String) throws -> FileDialogPanelItem? {
+        let t0 = Date(); defer { trace("item \(path.suffix(30)) \(Date().timeIntervalSince(t0))") }
         let wanted = Self.normalized(path)
         if let found = self.fileListEntry(matching: wanted) {
+            self.lastEntry = found
             return found.item
         }
+        // Until the list shows anything from the folder it is still loading; the caller polls again.
+        let folder = (wanted as NSString).deletingLastPathComponent
+        guard self.listShowsEntry(inFolder: folder) else { return nil }
         // Icon view only realizes the visible items: step through each scrollable file list and look again.
         for scrollBar in self.fileListScrollBars() {
             for step in 0...20 {
                 _ = AXUIElementSetAttributeValue(
                     scrollBar, kAXValueAttribute as CFString, NSNumber(value: Double(step) / 20.0))
                 if let found = self.fileListEntry(matching: wanted) {
+                    self.lastEntry = found
                     return found.item
                 }
             }
@@ -102,7 +114,12 @@ final class AXFileDialogPanelSurface: FileDialogPanelSurface {
     }
 
     func select(_ item: FileDialogPanelItem) throws -> Bool {
-        guard let entry = self.fileListEntry(matching: Self.normalized(item.path)) else { return false }
+        let t0 = Date(); defer { trace("select \(Date().timeIntervalSince(t0))") }
+        let wanted = Self.normalized(item.path)
+        let cached = self.lastEntry.flatMap { entry in
+            entry.item.path == wanted && self.role(entry.element) != nil ? entry : nil
+        }
+        guard let entry = cached ?? self.fileListEntry(matching: wanted) else { return false }
         if let row = self.ancestor(of: entry.element, where: { self.role($0) == kAXRowRole }) {
             guard AXUIElementSetAttributeValue(row, kAXSelectedAttribute as CFString, kCFBooleanTrue) == .success
             else { return false }
@@ -124,6 +141,7 @@ final class AXFileDialogPanelSurface: FileDialogPanelSurface {
     }
 
     func setFilename(_ name: String) throws {
+        let t0 = Date(); defer { trace("name \(Date().timeIntervalSince(t0))") }
         guard let field = self.nameField() else {
             throw AXFileDialogPanelSurfaceError("The panel has no Save As name field.")
         }
@@ -134,7 +152,8 @@ final class AXFileDialogPanelSurface: FileDialogPanelSurface {
     }
 
     func pressDefaultButton() throws {
-        let button = self.firstDescendant(where: { self.identifier($0) == Identifier.defaultButton })
+        let t0 = Date(); defer { trace("press \(Date().timeIntervalSince(t0))") }
+        let button = self.control(Identifier.defaultButton)
             ?? self.elementAttribute(self.panel, kAXDefaultButtonAttribute)
         guard let button else {
             throw AXFileDialogPanelSurfaceError("The panel has no default (Save/Open) button.")
@@ -156,13 +175,24 @@ final class AXFileDialogPanelSurface: FileDialogPanelSurface {
     }
 
     private func nameField() -> AXUIElement? {
-        self.firstDescendant(where: { self.identifier($0) == Identifier.nameField })
+        self.control(Identifier.nameField)
+    }
+
+    /// The panel's fixed controls keep their elements while the file list changes; re-find one only when its
+    /// element stops answering.
+    private func control(_ identifier: String) -> AXUIElement? {
+        if let cached = self.controls[identifier], self.identifier(cached) == identifier {
+            return cached
+        }
+        let found = self.firstDescendant(where: { self.identifier($0) == identifier })
+        self.controls[identifier] = found
+        return found
     }
 
     /// File-list entries carry their file as AXURL (a file reference URL); the sidebar's entries do not.
     private func fileListEntry(matching path: String) -> Entry? {
         var match: Entry?
-        self.walk { element in
+        self.walkFileList { element in
             guard let url = self.attribute(element, kAXURLAttribute) as? URL,
                   let resolved = (url as NSURL).filePathURL,
                   Self.normalized(resolved.path) == path
@@ -172,6 +202,21 @@ final class AXFileDialogPanelSurface: FileDialogPanelSurface {
             return false
         }
         return match
+    }
+
+    private func listShowsEntry(inFolder folder: String) -> Bool {
+        var found = false
+        self.walkFileList { element in
+            if let url = self.attribute(element, kAXURLAttribute) as? URL,
+               let resolved = (url as NSURL).filePathURL,
+               (Self.normalized(resolved.path) as NSString).deletingLastPathComponent == folder
+            {
+                found = true
+                return false
+            }
+            return true
+        }
+        return found
     }
 
     /// The vertical scroll bars of scroll areas that hold file-list entries.
@@ -243,14 +288,39 @@ final class AXFileDialogPanelSurface: FileDialogPanelSurface {
         return found
     }
 
+    /// Walks only the file list (the whole panel when it has no known file list). Column view lists every
+    /// level back to the volume, so its columns are searched last-first: the current folder is the last one.
+    private func walkFileList(_ visit: (AXUIElement) -> Bool) {
+        let list = self.fileListContainer()
+        self.walk(from: list, lastChildFirst: list.map { self.role($0) == kAXBrowserRole } ?? false, visit)
+    }
+
+    private func fileListContainer() -> AXUIElement? {
+        for identifier in Identifier.fileLists {
+            if let cached = self.controls[identifier], self.identifier(cached) == identifier {
+                return cached
+            }
+        }
+        let found = self.firstDescendant(where: { Identifier.fileLists.contains(self.identifier($0) ?? "") })
+        if let found, let identifier = self.identifier(found) {
+            self.controls[identifier] = found
+        }
+        return found
+    }
+
     /// Depth-first walk from the panel; `visit` returns false to stop.
-    private func walk(from root: AXUIElement? = nil, _ visit: (AXUIElement) -> Bool) {
+    private func walk(
+        from root: AXUIElement? = nil,
+        lastChildFirst: Bool = false,
+        _ visit: (AXUIElement) -> Bool)
+    {
         var stack = [root ?? self.panel]
         var count = 0
         while let element = stack.popLast(), count < self.maximumNodes {
             count += 1
             guard visit(element) else { return }
-            stack.append(contentsOf: self.children(element).reversed())
+            let children = self.children(element)
+            stack.append(contentsOf: lastChildFirst ? children : children.reversed())
         }
     }
 
@@ -308,5 +378,11 @@ struct AXFileDialogPanelSurfaceError: Error, LocalizedError {
 
     var errorDescription: String? {
         self.message
+    }
+}
+
+func trace(_ message: String) {
+    if ProcessInfo.processInfo.environment["PEEKABOO_FILE_DIALOG_TRACE"] == "1" {
+        FileHandle.standardError.write(Data("[fd-trace] \(message)\n".utf8))
     }
 }

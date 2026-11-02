@@ -144,4 +144,17 @@ struct BackgroundFileDialogNavigatorTests {
 
         #expect(report.savedPath == tree.url("run/exports/inner").appendingPathComponent("q3.txt").path)
     }
+
+    @Test
+    func `a selection the panel takes only on a later try still opens the folder`() async throws {
+        let tree = try TemporaryFolderTree(["run/decoy", "run/exports"])
+        defer { tree.remove() }
+        let panel = FakeSavePanel(directory: tree.url("run/decoy"), mode: .column)
+        panel.ignoredSelections = 2
+
+        let report = try await BackgroundFileDialogNavigator(panel: panel).run(
+            FileDialogDestination(directory: tree.url("run/exports"), filename: "q3.txt"))
+
+        #expect(report.savedPath == tree.url("run/exports").appendingPathComponent("q3.txt").path)
+    }
 }
