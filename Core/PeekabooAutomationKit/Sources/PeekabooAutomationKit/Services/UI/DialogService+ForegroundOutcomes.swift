@@ -842,7 +842,7 @@ extension DialogService {
             return textFields[index]
         }
 
-        let matches: [Element] = if let identifier {
+        var matches: [Element] = if let identifier {
             textFields.filter { field in
                 field.title() == identifier ||
                     field.attribute(Attribute<String>("AXPlaceholderValue")) == identifier ||
@@ -850,6 +850,9 @@ extension DialogService {
             }
         } else {
             textFields
+        }
+        if matches.isEmpty, let identifier {
+            matches = Self.textFields(labelled: identifier, in: dialog)
         }
         guard matches.count == 1, let field = matches.first else {
             throw DesktopActionFailure.preDispatchRefusal(
@@ -860,6 +863,35 @@ extension DialogService {
                 hint: "List the exact dialog and provide one unique field label, placeholder, or index.")
         }
         return field
+    }
+
+    /// Fields whose label is a separate static text shown just before them, such as the Save panel's
+    /// "Save As:" name field. Case and a trailing colon are ignored.
+    static func textFields(labelled label: String, in root: Element) -> [Element] {
+        func normalized(_ text: String) -> String {
+            var text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if text.hasSuffix(":") { text.removeLast() }
+            return text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        }
+        let wanted = normalized(label)
+        guard !wanted.isEmpty else { return [] }
+        var fields: [Element] = []
+        var stack = [root]
+        var visited = 0
+        while let element = stack.popLast(), visited < 4000 {
+            visited += 1
+            let children = element.children() ?? []
+            for (index, child) in children.enumerated() where child.role() == "AXStaticText" {
+                guard let text = child.value() as? String, normalized(text) == wanted else { continue }
+                if let field = children[(index + 1)...].first(where: {
+                    ["AXTextField", "AXTextArea"].contains($0.role() ?? "")
+                }) {
+                    fields.append(field)
+                }
+            }
+            stack.append(contentsOf: children.reversed())
+        }
+        return fields
     }
 
     func dialogInputDetails(
