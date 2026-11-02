@@ -93,12 +93,14 @@ extension CommanderCLIBinder {
             }
             try rejectForegroundOptionsWithoutConsent()
         } else if commandType == DialogCommand.FileSubcommand.self {
-            guard values.flag("foreground") else {
+            guard values.flag("foreground") || target.hasAnyTarget else {
                 try refuse(
-                    "Dialog file interaction requires --foreground.",
-                    hint: "Add --foreground to authorize keyboard and coordinate interaction."
+                    "Targetless dialog file interaction requires --foreground.",
+                    hint: "Add --app, --pid or --window-id to drive the panel in the background, or authorize " +
+                        "--foreground keyboard interaction."
                 )
             }
+            try rejectForegroundOptionsWithoutConsent()
         } else if commandType == DialogCommand.DismissSubcommand.self {
             if values.flag("force") {
                 guard values.flag("foreground") else {

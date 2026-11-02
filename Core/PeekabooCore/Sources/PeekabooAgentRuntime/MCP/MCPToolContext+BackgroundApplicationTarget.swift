@@ -265,7 +265,7 @@ extension MCPToolContext {
         guard identifiers.count == 1,
               let identifier = identifiers.first,
               !identifier.uppercased().hasPrefix("PID:"),
-              try await !self.applications.isApplicationRunning(identifier: identifier)
+              try await !self.isApplicationRunningForLaunch(identifier)
         else { return nil }
         if let rejection = self.executionPolicy.systemSurfaceRejection(
             toolName: toolName,
@@ -275,6 +275,47 @@ extension MCPToolContext {
             return BackgroundTargetAuthorization(arguments: arguments, rejection: rejection, targetPlan: nil)
         }
         return BackgroundTargetAuthorization(arguments: arguments, rejection: nil, targetPlan: nil)
+    }
+
+    /// `app launch` by a name that a regular app shares with accessory or background helpers (Chrome's
+    /// alert-notification helper is also called "Google Chrome") is pinned to the one regular app by PID before
+    /// authorization. Mutation planning stays fail-closed for such ties; this applies to launch only, where the
+    /// request names the app the user sees. Several regular matches are left alone and refused with their PIDs.
+    func launchArgumentsPinningSharedName(toolName: String, arguments: ToolArguments) async -> ToolArguments {
+        guard toolName == "app",
+              MCPToolRequestSemantics.isSafeBackgroundApplicationLaunchNoOp(arguments) ||
+              MCPToolRequestSemantics.isBackgroundApplicationDocumentOpen(arguments),
+              Self.nonEmpty(arguments.getString("bundleId")) == nil,
+              let name = Self.nonEmpty(arguments.getString("name")),
+              !name.uppercased().hasPrefix("PID:"),
+              let applications = try? await self.applications.listApplications().data.applications
+        else { return arguments }
+        let candidates = applications.map(ApplicationIdentifierMatcher.Candidate.init)
+        guard let resolution = try? ApplicationIdentifierMatcher.resolution(for: name, in: candidates),
+              resolution.hasWinningTie,
+              resolution.matchKind != .fuzzyNameOrExecutable
+        else { return arguments }
+        let winners = candidates.filter {
+            ApplicationIdentifierMatcher.matchKind(for: $0, identifier: name) == resolution.matchKind
+        }
+        let regular = winners.filter(\.isRegularApplication)
+        guard regular.count == 1, let app = regular.first, winners.count > 1 else { return arguments }
+        var pinned = arguments.rawDictionary
+        pinned["name"] = "PID:\(app.processIdentifier)"
+        return ToolArguments(raw: pinned)
+    }
+
+    /// A name shared by several running instances must reach the caller as that ambiguity, with the PIDs to
+    /// choose from, instead of the generic "could not be validated" refusal.
+    @MainActor
+    private func isApplicationRunningForLaunch(_ identifier: String) async throws -> Bool {
+        do {
+            return try await self.applications.isApplicationRunning(identifier: identifier)
+        } catch let error as PeekabooError {
+            guard case .ambiguousAppIdentifier = error else { throw error }
+            throw BackgroundTargetResolutionError(
+                "\(error.localizedDescription). Pass name as PID:<n> to pick one running instance.")
+        }
     }
 
     @MainActor

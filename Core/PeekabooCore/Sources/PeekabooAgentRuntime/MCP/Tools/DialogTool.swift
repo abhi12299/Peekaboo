@@ -24,13 +24,20 @@ public struct DialogTool: MCPTool {
         if self.context.executionPolicy == .backgroundOnly {
             return """
             Inspect and interact with system dialogs under immutable background-only authority. Available actions are
-            `list`, targeted `click`, targeted `input`, and targeted non-forced `dismiss`. Every mutation requires an
-            explicit app, PID, or exact window target. File-dialog keyboard navigation, forced dismissal, targetless
-            input, and foreground fallback are unavailable; use a human-authorized foreground-capable session or CLI.
+            `list`, targeted `click`, targeted `input`, targeted `file`, and targeted non-forced `dismiss`. Every
+            mutation requires an explicit app, PID, or exact window target. Forced dismissal, targetless input or
+            file, and foreground fallback are unavailable.
+
+            `file` drives an Open or Save panel through accessibility without activating the app: `path` is the
+            folder to save into (it must exist), `name` the bare file name. It moves through the panel's Where menu
+            and file list, never by typing a path, then presses Save and checks the file on disk. Use it instead of
+            clicking the Where popup or typing a path into "Save As" (a typed "/" becomes part of the name).
 
             Examples:
             - Click OK: { "action": "click", "button": "OK", "app": "TextEdit" }
             - Background input: { "action": "input", "text": "hello", "field": "Name", "app": "TextEdit" }
+            - Save into a folder: { "action": "file", "path": "/Users/me/exports", "name": "report.txt",
+              "app": "TextEdit" }
             - Dismiss: { "action": "dismiss", "app": "TextEdit" }
             """
         }
@@ -43,13 +50,14 @@ public struct DialogTool: MCPTool {
           succeeds with dialog_present=false
         - click: press a dialog button
         - input: type into a dialog text field
-        - file: drive NSOpenPanel/NSSavePanel dialogs (path/name/select/verify)
+        - file: drive NSOpenPanel/NSSavePanel dialogs (path/name/select/verify). Targeted and without
+          foreground it runs in the background through accessibility (Where menu and file list).
         - dismiss: close the active dialog
 
         Targeting:
         - click and non-forced dismiss require app/pid or an exact window_id target.
         - targeted input defaults to background AXValue delivery; targetless input requires foreground=true.
-        - file interaction always requires foreground=true.
+        - targeted file defaults to background accessibility delivery; targetless file requires foreground=true.
         - list may be targetless; targeted list remains read-only and must resolve exactly one dialog.
         - app and pid are alternatives. Provide at most one window selector; title/index require app or pid.
         - Set foreground=true only for explicit keyboard/file interaction or a global fallback.
@@ -67,12 +75,12 @@ public struct DialogTool: MCPTool {
         let foregroundCapable = self.context.executionPolicy != .backgroundOnly
         let actions = foregroundCapable
             ? DialogToolAction.allCases.map(\.rawValue)
-            : [DialogToolAction.list, .click, .input, .dismiss].map(\.rawValue)
+            : [DialogToolAction.list, .click, .input, .file, .dismiss].map(\.rawValue)
         var properties: [String: Value] = [
             "action": SchemaBuilder.string(
                 description: foregroundCapable
                     ? "Action to perform"
-                    : "Background-safe dialog action; file and global input are unavailable",
+                    : "Background-safe dialog action; targetless and global input are unavailable",
                 enum: actions),
             "app": SchemaBuilder.string(description: "Target app name/bundle ID, or 'PID:<n>'."),
             "pid": SchemaBuilder.integer(description: "Target process ID (alternative to app)."),
@@ -85,15 +93,16 @@ public struct DialogTool: MCPTool {
             "field_index": SchemaBuilder.integer(description: "Field index (0-based) to target (for input action)."),
             "clear": SchemaBuilder.boolean(description: "Clear existing text first.", default: false),
         ]
+        properties["path"] = SchemaBuilder.string(
+            description: "Folder to save into or open from (for file action). A path ending in a file name is " +
+                "split into folder and name.")
+        properties["name"] = SchemaBuilder.string(description: "Bare file name to enter (for save dialogs).")
+        properties["select"] = SchemaBuilder.string(
+            description: "Button to click after setting path/name; default clicks OKButton (Save/Open).")
         if foregroundCapable {
             properties["foreground"] = SchemaBuilder.boolean(
                 description: "Allow focus/global input. Required for targetless input, file, and forced dismiss.",
                 default: false)
-            properties["path"] = SchemaBuilder.string(
-                description: "Directory (or full path) to navigate to (for file action).")
-            properties["name"] = SchemaBuilder.string(description: "Filename to enter (for save dialogs).")
-            properties["select"] = SchemaBuilder.string(
-                description: "Button to click after setting path/name; default clicks OKButton.")
             properties["ensure_expanded"] = SchemaBuilder.boolean(
                 description: "Ensure file dialogs are expanded (Show Details) before applying path navigation.",
                 default: false)
@@ -120,7 +129,7 @@ public struct DialogTool: MCPTool {
             if action == .list, inputs.foreground {
                 throw DialogToolInputError.invalid("foreground", "dialog list is always read-only/background")
             }
-            if action == .file, !inputs.foreground {
+            if action == .file, !inputs.foreground, !inputs.hasAnyTargeting {
                 throw DialogToolInputError.foregroundRequired(action)
             }
             if action == .dismiss, inputs.force == true, !inputs.foreground {
@@ -434,7 +443,8 @@ public struct DialogTool: MCPTool {
                 path: request.path,
                 filename: request.name,
                 actionButton: actionButton,
-                ensureExpanded: request.ensureExpanded))
+                ensureExpanded: request.ensureExpanded,
+                background: !inputs.foreground))
         } else {
             try await self.context.dialogs.handleFileDialog(
                 path: request.path,
@@ -479,6 +489,8 @@ public struct DialogTool: MCPTool {
         if let savedPath {
             let verifySuffix = savedVerified ? " (verified)" : ""
             message += ": \(clicked) → \(savedPath)\(verifySuffix)"
+        } else if let openedPath = result.details["opened_path"] {
+            message += ": opened \(openedPath)"
         } else {
             message += ": clicked \(clicked)"
         }

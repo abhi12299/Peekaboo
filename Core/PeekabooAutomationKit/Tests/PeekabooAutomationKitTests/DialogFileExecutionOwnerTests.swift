@@ -36,6 +36,125 @@ struct DialogFileExecutionOwnerTests {
     }
 
     @Test
+    func `background file execution saves through the panel and reports a background accessibility outcome`()
+        async throws
+    {
+        let fixture = try FileExecutionOwnerFixture()
+        let tree = try TemporaryFolderTree(["run/decoy", "run/exports"])
+        defer { tree.remove() }
+        let panel = FakeSavePanel(directory: tree.url("run/decoy"))
+        let request = try DialogFileExecutionRequest(
+            target: DialogTargetSelector(processIdentifier: 42, windowID: 700),
+            path: tree.url("run/exports").path,
+            filename: "q3.txt",
+            background: true)
+
+        let result = try await fixture.service().executeBackgroundFileDialog(
+            request, resolution: fixture.resolution(), surface: panel)
+
+        let expected = tree.url("run/exports").appendingPathComponent("q3.txt").path
+        #expect(result.success)
+        #expect(result.action == .handleFileDialog)
+        #expect(result.outcome?.state == .confirmedChange)
+        #expect(result.outcome?.delivery == .init(mechanism: .accessibilityAction, mode: .background))
+        #expect(result.details["saved_path"] == expected)
+        #expect(result.details["saved_path_verified"] == "true")
+        #expect(result.targetWindowIdentity == fixture.target.identity)
+    }
+
+    @Test
+    func `a sheet reached through its parent and its own window is one dialog candidate`() throws {
+        // A Save sheet has its own WindowServer window ("Save") next to its parent ("Exporter"). The sheet's
+        // window resolves to the AXSheet itself, the parent's to the AXWindow holding it; both find the same
+        // sheet, which made `dialog file --pid` ambiguous (seen live on BenchFixture).
+        let parent = Element(
+            AXUIElementCreateApplication(-1),
+            attributes: ["AXTitle": .string("Exporter")],
+            children: [],
+            actions: [])
+        let sheet = FileExecutionOwnerFixture.element(2)
+        let sheetWindow = try FileExecutionOwnerFixture.target(windowID: 9505)
+        let parentWindow = try FileExecutionOwnerFixture.target(windowID: 9504)
+        let candidates = try [
+            DialogService.TargetedDialogCandidate(
+                target: sheetWindow,
+                resolvedTarget: FileExecutionOwnerFixture.evidence(target: sheetWindow, title: "Save"),
+                window: sheet,
+                dialog: sheet),
+            DialogService.TargetedDialogCandidate(
+                target: parentWindow,
+                resolvedTarget: FileExecutionOwnerFixture.evidence(target: parentWindow, title: "Exporter"),
+                window: parent,
+                dialog: sheet),
+        ]
+
+        let collapsed = DialogService.collapsingSharedDialogCandidates(candidates)
+
+        #expect(collapsed.count == 1)
+        #expect(collapsed.first?.target.identity.windowID == 9504)
+    }
+
+    @Test
+    func `background open reports the opened file`() async throws {
+        let fixture = try FileExecutionOwnerFixture()
+        let tree = try TemporaryFolderTree(["run/decoy", "run/docs"])
+        defer { tree.remove() }
+        let file = tree.url("run/docs").appendingPathComponent("notes.txt")
+        try Data("x".utf8).write(to: file)
+        let panel = FakeSavePanel(directory: tree.url("run/decoy"))
+        panel.isOpenPanel = true
+        let request = try DialogFileExecutionRequest(
+            target: DialogTargetSelector(processIdentifier: 42, windowID: 700),
+            path: file.path,
+            background: true)
+
+        let result = try await fixture.service().executeBackgroundFileDialog(
+            request, resolution: fixture.resolution(), surface: panel)
+
+        #expect(result.details["opened_path"] == file.path)
+        #expect(result.details["saved_path"] == nil)
+        #expect(result.outcome?.state == .confirmedChange)
+    }
+
+    @Test
+    func `a name with its own extension is not verified by a temporary or backup file`() async throws {
+        let tree = try TemporaryFolderTree(["out"])
+        defer { tree.remove() }
+        let startedAt = Date()
+        try Data("x".utf8).write(to: tree.url("out").appendingPathComponent("report.txt.bak"))
+
+        let found = await DialogService.waitForSavedFile(
+            tree.url("out").appendingPathComponent("report.txt").path,
+            notBefore: startedAt,
+            timeout: .milliseconds(200))
+
+        #expect(found == nil)
+        let tmpOnly = await DialogService.waitForSavedFile(
+            tree.url("out").appendingPathComponent("report.txt").path,
+            notBefore: startedAt,
+            timeout: .milliseconds(100))
+        #expect(tmpOnly == nil)
+    }
+
+    @Test
+    func `the saved file may carry an extension the panel hid in the name field`() async throws {
+        let tree = try TemporaryFolderTree(["out"])
+        defer { tree.remove() }
+        let startedAt = Date()
+        let written = tree.url("out").appendingPathComponent("report.rtf")
+        try Data("x".utf8).write(to: written)
+
+        let found = await DialogService.waitForSavedFile(
+            tree.url("out").appendingPathComponent("report").path,
+            notBefore: startedAt,
+            timeout: .milliseconds(200))
+
+        // Found by an added extension: reported, but not counted as verified.
+        #expect(found?.path == written.path)
+        #expect(found?.exact == false)
+    }
+
+    @Test
     func `file execution refuses missing parent or selector evidence before dispatch`() throws {
         let fixture = try FileExecutionOwnerFixture()
         var missingParent = try fixture.resolution()

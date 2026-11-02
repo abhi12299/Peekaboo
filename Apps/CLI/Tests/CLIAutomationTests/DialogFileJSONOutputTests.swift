@@ -168,6 +168,76 @@ struct DialogFileJSONOutputTests {
     }
 
     @Test
+    func `targeted dialog file without foreground sends a background request`() async throws {
+        let dialogService = Self.successfulDialogService()
+        dialogService.handleFileDialogResult = Self.successResult(
+            targetIdentity: DialogFileFocusWindowService.identity,
+            targetBounds: DialogFileFocusWindowService.bounds
+        )
+        let windows = DialogFileFocusWindowService()
+        let services = TestServicesFactory.makePeekabooServices(
+            windows: windows,
+            dialogs: dialogService
+        )
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "dialog", "file",
+                "--window-id", String(DialogFileFocusWindowService.windowID),
+                "--pid", String(DialogFileFocusWindowService.processIdentifier),
+                "--path", "/tmp",
+                "--name", "out.txt",
+                "--json",
+            ],
+            services: services
+        )
+
+        #expect(result.exitStatus == 0, "\(result.stdout)\(result.stderr)")
+        #expect(windows.pinnedFocusCalls.isEmpty)
+        let request = try #require(dialogService.exactFileRequests.first)
+        #expect(request.background)
+        #expect(request.filename == "out.txt")
+    }
+
+    @Test
+    func `background open reports the opened file in JSON`() async throws {
+        let dialogService = Self.successfulDialogService()
+        let base = Self.successResult(
+            targetIdentity: DialogFileFocusWindowService.identity,
+            targetBounds: DialogFileFocusWindowService.bounds
+        )
+        dialogService.handleFileDialogResult = DialogActionResult(
+            success: true,
+            action: .handleFileDialog,
+            details: ["button_clicked": "default", "opened_path": "/docs/report.txt"],
+            outcome: base.outcome,
+            targetReceipt: base.targetReceipt,
+            targetWindowIdentity: base.targetWindowIdentity,
+            targetWindowBounds: base.targetWindowBounds,
+            focusedElement: nil
+        )
+        let services = TestServicesFactory.makePeekabooServices(
+            windows: DialogFileFocusWindowService(),
+            dialogs: dialogService
+        )
+
+        let result = try await InProcessCommandRunner.run(
+            [
+                "dialog", "file",
+                "--window-id", String(DialogFileFocusWindowService.windowID),
+                "--pid", String(DialogFileFocusWindowService.processIdentifier),
+                "--path", "/docs/report.txt",
+                "--json",
+            ],
+            services: services
+        )
+
+        let object = try Self.jsonObject(result.stdout)
+        let data = try #require(object["data"] as? [String: Any])
+        #expect(data["opened_path"] as? String == "/docs/report.txt")
+    }
+
+    @Test
     func `dialog file does not inherit setup target when leaf omits target evidence`() async throws {
         let dialogService = Self.successfulDialogService()
         dialogService.handleFileDialogResult = Self.successResult()

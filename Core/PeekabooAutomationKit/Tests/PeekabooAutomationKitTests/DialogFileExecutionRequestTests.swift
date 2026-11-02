@@ -19,6 +19,25 @@ struct DialogFileExecutionRequestTests {
     }
 
     @Test
+    func `background file execution round trips and older payloads decode as foreground`() throws {
+        let request = try DialogFileExecutionRequest(
+            target: DialogTargetSelector(processIdentifier: 42),
+            path: "/tmp/exports",
+            filename: "q3.txt",
+            background: true)
+        let decoded = try JSONDecoder().decode(
+            DialogFileExecutionRequest.self, from: JSONEncoder().encode(request))
+        #expect(decoded.background)
+
+        var legacy = try #require(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(request)) as? [String: Any])
+        legacy.removeValue(forKey: "background")
+        let legacyRequest = try JSONDecoder().decode(
+            DialogFileExecutionRequest.self, from: JSONSerialization.data(withJSONObject: legacy))
+        #expect(!legacyRequest.background)
+    }
+
+    @Test
     func `exact file execution rejects an absent target`() throws {
         let target = try DialogTargetSelector()
         #expect(throws: DesktopActionFailure.self) {

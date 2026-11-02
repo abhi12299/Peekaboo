@@ -379,12 +379,51 @@ extension DialogService {
         try Task.checkCancellation()
         return switch membership {
         case .structuralMutation, .filePanel:
-            structuralCandidates
+            Self.collapsingSharedDialogCandidates(structuralCandidates)
         case .readOnlyCompatible:
             DialogElementClassifier.preferredReadCandidates(
-                structural: structuralCandidates,
+                structural: Self.collapsingSharedDialogCandidates(structuralCandidates),
                 legacy: legacyCandidates)
         }
+    }
+
+    /// A sheet has its own WindowServer window next to its parent's. The sheet's window resolves to the AXSheet
+    /// itself and the parent's to the AXWindow holding it, so both find the same sheet. Keep one candidate per
+    /// dialog element: the one with a real parent window, then the WindowServer window whose title matches its AX
+    /// window, then the lower window ID.
+    static func collapsingSharedDialogCandidates(
+        _ candidates: [TargetedDialogCandidate]) -> [TargetedDialogCandidate]
+    {
+        var collapsed: [TargetedDialogCandidate] = []
+        for candidate in candidates {
+            guard let index = collapsed.firstIndex(where: { $0.dialog == candidate.dialog }) else {
+                collapsed.append(candidate)
+                continue
+            }
+            if self.prefersAsDialogOwner(candidate, over: collapsed[index]) {
+                collapsed[index] = candidate
+            }
+        }
+        return collapsed
+    }
+
+    private static func prefersAsDialogOwner(
+        _ candidate: TargetedDialogCandidate,
+        over current: TargetedDialogCandidate) -> Bool
+    {
+        let candidateHasParent = candidate.window != candidate.dialog
+        let currentHasParent = current.window != current.dialog
+        if candidateHasParent != currentHasParent {
+            return candidateHasParent
+        }
+        let title = candidate.window.title()
+        let candidateMatches = title != nil && candidate.resolvedTarget.windowTitle == title
+        let currentTitle = current.window.title()
+        let currentMatches = currentTitle != nil && current.resolvedTarget.windowTitle == currentTitle
+        if candidateMatches != currentMatches {
+            return candidateMatches
+        }
+        return candidate.target.identity.windowID < current.target.identity.windowID
     }
 
     private static func windowResolutionProof(

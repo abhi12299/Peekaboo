@@ -147,7 +147,32 @@ struct AppCommandLaunchFlowTests {
         #expect(!output.contains("Already running"))
     }
 
-    @Test(arguments: ["/nonexistent/peekaboo-missing-document.txt", "https://example.com", "/tmp"])
+    @Test
+    func `Background open of a folder that made the app take the front says it was handed back`() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("peekaboo-cli-open-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let service = self.makeLaunchService(name: "Cursor", bundleIdentifier: "com.todesktop.230313mzl4w4u92")
+        service.handBacks = 1
+        var command = AppCommand.LaunchSubcommand()
+        command.app = "Cursor"
+        command.openTargets = [directory.path]
+        let runtime = CommandRuntime(
+            configuration: .init(verbose: false, jsonOutput: false, logLevel: nil),
+            services: ServicesWithApplicationStub(applications: service)
+        )
+
+        let output = try await captureStandardOutputText {
+            try await command.run(using: runtime)
+        }
+
+        #expect(service.launchRequests.first?.openURLs.map(\.path) == [directory.path])
+        #expect(output.contains("Cursor activated itself and the front app was handed back once"))
+        #expect(!output.contains("without activating it"))
+    }
+
+    @Test(arguments: ["/nonexistent/peekaboo-missing-document.txt", "https://example.com"])
     func `Background launch refuses open targets that are not existing local documents`(
         target: String
     ) async throws {
@@ -1017,6 +1042,8 @@ ApplicationMutationInventoryProviding {
     private(set) var activateCalls: [String] = []
     private(set) var activationRequests: [ApplicationActivationRequest] = []
     private(set) var launchRequests: [ApplicationLaunchRequest] = []
+    /// Times the launched app took the front and was handed back (each is one extra dispatched unit).
+    var handBacks = 0
     private(set) var relaunchRequests: [ApplicationRelaunchRequest] = []
     private(set) var quitCalls: [QuitCall] = []
     private(set) var quitRequests: [ApplicationQuitRequest] = []
@@ -1157,7 +1184,7 @@ ApplicationMutationInventoryProviding {
             : .dispatchedUnverified(
                 delivery: Self.applicationDelivery(mode: request.activates ? .foreground : .background),
                 evidence: .deliveryAccepted,
-                unitCount: .one
+                unitCount: .init(1 + self.handBacks)
             )
         return DesktopActionResult(payload: application, outcome: outcome)
     }

@@ -431,7 +431,9 @@ private enum BackgroundOnlyToolPolicy {
                 ? nil
                 : .sharedDesktop("targetless dialog keyboard input requires foreground consent")
         case .file:
-            return .sharedDesktop("dialog keyboard/file interaction requires foreground consent")
+            return self.hasDialogTarget(arguments)
+                ? nil
+                : .sharedDesktop("targetless dialog file interaction requires foreground consent")
         }
     }
 

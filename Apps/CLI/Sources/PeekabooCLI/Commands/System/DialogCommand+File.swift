@@ -25,7 +25,10 @@ extension DialogCommand {
         @Flag(name: .long, help: "Ensure file dialogs are expanded (Show Details) before setting --path")
         var ensureExpanded = false
 
-        @Flag(help: "Focus the file dialog before keyboard or coordinate interaction")
+        @Flag(
+            help: "Focus the file dialog and use keyboard navigation. Without it, a targeted panel (--app, --pid or " +
+                "--window-id) is driven in the background through accessibility."
+        )
         var foreground = false
 
         @Option(name: .customLong("timeout"), help: "File-dialog timeout (bare values are milliseconds; default 20s)")
@@ -42,6 +45,7 @@ extension DialogCommand {
             let name = self.name
             let select = self.select
             let ensureExpanded = self.ensureExpanded
+            let background = !self.foreground
             let dialogTarget = try self.target.dialogTargetSelector()
             let fileFocus = DialogForegroundFocusPolicy(
                 autoFocus: self.focusOptions.autoFocus,
@@ -58,9 +62,10 @@ extension DialogCommand {
                 resolveAppHint: !dialogTarget.hasTarget,
                 handlesPeekabooError: true,
                 validate: {
-                    guard self.foreground else {
+                    guard !background || dialogTarget.hasTarget else {
                         throw ValidationError(
-                            "dialog file uses keyboard/coordinate interaction and requires --foreground"
+                            "targetless dialog file uses keyboard/coordinate interaction and requires --foreground; " +
+                                "pass --app, --pid or --window-id to drive the panel in the background"
                         )
                     }
                 },
@@ -77,7 +82,8 @@ extension DialogCommand {
                                 filename: name,
                                 actionButton: select,
                                 ensureExpanded: ensureExpanded,
-                                focus: fileFocus
+                                focus: fileFocus,
+                                background: background
                             ))
                         }
                         return try await context.services.dialogs.handleFileDialog(
@@ -151,8 +157,14 @@ extension DialogCommand {
                             print("  Name: \(name)")
                         }
                         print("  Action: \(result.details["button_clicked"] ?? self.select ?? "default")")
-                        if let savedPath = result.details["saved_path"], result.details["saved_path_exists"] == "true" {
+                        if let savedPath = result.details["saved_path"],
+                           result.details["saved_path_exists"] == "true" ||
+                           result.details["saved_path_verified"] == "true"
+                        {
                             print("  Saved: \(savedPath)")
+                        }
+                        if let openedPath = result.details["opened_path"] {
+                            print("  Opened: \(openedPath)")
                         }
                     }
                     let resolvedPath = result.details["path"] ?? self.path ?? "unknown"
@@ -184,6 +196,7 @@ extension DialogCommand {
                 buttonClicked: result.details["button_clicked"] ?? self.select ?? "default",
                 buttonIdentifier: result.details["button_identifier"],
                 savedPath: result.details["saved_path"],
+                openedPath: result.details["opened_path"],
                 savedPathVerified: savedPathVerified,
                 savedPathFoundVia: result.details["saved_path_found_via"],
                 savedPathMatchesExpected: result.details["saved_path_matches_expected"].map { $0 == "true" },
@@ -209,6 +222,7 @@ private struct FileDialogResult: Codable {
     let buttonClicked: String
     let buttonIdentifier: String?
     let savedPath: String?
+    let openedPath: String?
     let savedPathVerified: Bool
     let savedPathFoundVia: String?
     let savedPathMatchesExpected: Bool?
@@ -229,6 +243,7 @@ private struct FileDialogResult: Codable {
         case buttonClicked
         case buttonIdentifier = "button_identifier"
         case savedPath
+        case openedPath = "opened_path"
         case savedPathVerified
         case savedPathFoundVia = "saved_path_found_via"
         case savedPathMatchesExpected = "saved_path_matches_expected"

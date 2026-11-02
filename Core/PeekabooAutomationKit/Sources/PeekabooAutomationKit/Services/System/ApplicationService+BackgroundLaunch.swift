@@ -2,9 +2,9 @@ import AppKit
 import Foundation
 import PeekabooFoundation
 
-/// Only existing local documents are delivered to an application without activation. Web and custom-scheme
-/// URLs can make the receiving app (or a browser) activate, and a plain directory is not a document. Document
-/// packages such as `.rtfd` are directories on disk and stay allowed.
+/// Only existing local files and folders are delivered to an application without activation. Web and
+/// custom-scheme URLs can make the receiving app (or a browser) activate. Folders are allowed so editors such as
+/// Cursor or VS Code can open a project; the launch still hands the foreground back if the app takes it.
 public enum BackgroundDocumentOpenPolicy {
     /// Throws before any dispatch, naming the first unusable target.
     public static func validate(_ urls: [URL]) throws {
@@ -14,14 +14,8 @@ public enum BackgroundDocumentOpenPolicy {
                     "Background delivery of \(url.absoluteString) is refused before dispatch: only existing " +
                         "local files can be opened without activating the app.")
             }
-            var isDirectory: ObjCBool = false
-            guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory) else {
+            guard FileManager.default.fileExists(atPath: url.path) else {
                 throw PeekabooError.invalidInput("Document to open does not exist: \(url.path)")
-            }
-            if isDirectory.boolValue,
-               (try? url.resourceValues(forKeys: [.isPackageKey]))?.isPackage != true
-            {
-                throw PeekabooError.invalidInput("Document to open is a directory, not a file: \(url.path)")
             }
         }
     }

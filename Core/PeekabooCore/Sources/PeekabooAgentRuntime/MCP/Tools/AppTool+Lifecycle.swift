@@ -55,10 +55,20 @@ extension AppToolActions {
         let timing = self.executionTimeString(since: request.startTime)
         // A legacy service without canonical outcomes cannot cold-launch in the background, so its successful
         // background launch is still the already-running no-op.
+        // A background open dispatches once, plus one unit per hand-back after the app activated itself.
+        let handBacks = request.foreground ? 0 : max(0, (outcome?.dispatchState.unitCount?.rawValue ?? 1) - 1)
+        let activationNote = if request.foreground {
+            ""
+        } else if handBacks > 0 {
+            "; \(app.name) activated itself and the front app was handed back "
+                + (handBacks == 1 ? "once" : "\(handBacks) times")
+        } else {
+            " without activating it"
+        }
         let message = if openedDocuments {
             "\(AgentDisplayTokens.Status.success) Opened \(documentURLs.map(\.path).joined(separator: ", ")) "
                 + "in \(app.name) (PID: \(app.processIdentifier))"
-                + (request.foreground ? "" : " without activating it")
+                + activationNote
                 + " in \(timing). "
                 + Self.documentWindowHint(documentWindows, documents: documentURLs, appName: app.name)
         } else if outcome?.state == .confirmedNoChange ||
@@ -81,6 +91,7 @@ extension AppToolActions {
                 "foreground": .bool(request.foreground),
                 "open_targets": .array(request.openTargets.map(Value.string)),
                 "opened_documents": .array(documentURLs.map { .string($0.path) }),
+                "front_hand_backs": .int(handBacks),
                 "wait_until_ready": .bool(request.waitUntilReady),
                 "wait_for_window": .bool(request.waitForWindow),
                 "new_instance": .bool(request.newInstance),
