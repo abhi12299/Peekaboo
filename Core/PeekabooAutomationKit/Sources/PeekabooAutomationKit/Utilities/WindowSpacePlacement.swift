@@ -48,6 +48,45 @@ public enum WindowSpacePlacement: Equatable, Sendable {
     }
 }
 
+/// The Spaces the displays are showing now, and the user's Space list in `space list` order.
+public struct SpaceVisibility: Equatable, Sendable {
+    public let visibleSpaceIDs: Set<UInt64>
+    public let orderedSpaceIDs: [UInt64]
+
+    public init(visibleSpaceIDs: Set<UInt64>, orderedSpaceIDs: [UInt64]) {
+        self.visibleSpaceIDs = visibleSpaceIDs
+        self.orderedSpaceIDs = orderedSpaceIDs
+    }
+
+    public func placement(ofWindowInSpaces windowSpaceIDs: [UInt64]) -> WindowSpacePlacement {
+        WindowSpacePlacement.classify(
+            windowSpaceIDs: windowSpaceIDs,
+            visibleSpaceIDs: self.visibleSpaceIDs,
+            orderedSpaceIDs: self.orderedSpaceIDs)
+    }
+
+    /// Reads the Space each display shows and the Space list from the window server.
+    @MainActor
+    public static func live() -> Self {
+        let connection = _CGSDefaultConnection()
+        guard connection != 0 else { return Self(visibleSpaceIDs: [], orderedSpaceIDs: []) }
+        var visible = Set<UInt64>()
+        for case let display as [String: Any] in CGSCopyManagedDisplaySpaces(connection) as NSArray {
+            if let current = display["Current Space"] as? [String: Any],
+               let id = ((current["ManagedSpaceID"] ?? current["id64"]) as? NSNumber)?.uint64Value
+            {
+                visible.insert(id)
+            }
+        }
+        if visible.isEmpty {
+            let active = CGSGetActiveSpace(connection)
+            if active != 0 { visible.insert(active) }
+        }
+        // Number Spaces the way `space list` does, so the two agree.
+        return Self(visibleSpaceIDs: visible, orderedSpaceIDs: SpaceManagementService().getAllSpaces().map(\.id))
+    }
+}
+
 extension WindowSpacePlacement {
     /// Reads the window's Space memberships and the Space each display shows from the window server.
     @MainActor
@@ -59,22 +98,6 @@ extension WindowSpacePlacement {
             return .unknown
         }
         let windowSpaceIDs = (windowSpaces as NSArray).compactMap { ($0 as? NSNumber)?.uint64Value }
-        var visible = Set<UInt64>()
-        for case let display as [String: Any] in CGSCopyManagedDisplaySpaces(connection) as NSArray {
-            if let current = display["Current Space"] as? [String: Any], let id = Self.spaceID(current) {
-                visible.insert(id)
-            }
-        }
-        // Number the Space the way `space list` does, so the two agree.
-        let ordered = SpaceManagementService().getAllSpaces().map(\.id)
-        if visible.isEmpty {
-            let active = CGSGetActiveSpace(connection)
-            if active != 0 { visible.insert(active) }
-        }
-        return self.classify(windowSpaceIDs: windowSpaceIDs, visibleSpaceIDs: visible, orderedSpaceIDs: ordered)
-    }
-
-    private static func spaceID(_ space: [String: Any]) -> UInt64? {
-        ((space["ManagedSpaceID"] ?? space["id64"]) as? NSNumber)?.uint64Value
+        return SpaceVisibility.live().placement(ofWindowInSpaces: windowSpaceIDs)
     }
 }
