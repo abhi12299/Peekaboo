@@ -157,8 +157,14 @@ extension DialogCommand {
                             print("  Name: \(name)")
                         }
                         print("  Action: \(result.details["button_clicked"] ?? self.select ?? "default")")
-                        if let savedPath = result.details["saved_path"], result.details["saved_path_exists"] == "true" {
+                        if let savedPath = result.details["saved_path"],
+                           result.details["saved_path_exists"] == "true" ||
+                           result.details["saved_path_verified"] == "true"
+                        {
                             print("  Saved: \(savedPath)")
+                        }
+                        if let openedPath = result.details["opened_path"] {
+                            print("  Opened: \(openedPath)")
                         }
                     }
                     let resolvedPath = result.details["path"] ?? self.path ?? "unknown"
@@ -190,6 +196,7 @@ extension DialogCommand {
                 buttonClicked: result.details["button_clicked"] ?? self.select ?? "default",
                 buttonIdentifier: result.details["button_identifier"],
                 savedPath: result.details["saved_path"],
+                openedPath: result.details["opened_path"],
                 savedPathVerified: savedPathVerified,
                 savedPathFoundVia: result.details["saved_path_found_via"],
                 savedPathMatchesExpected: result.details["saved_path_matches_expected"].map { $0 == "true" },
@@ -215,6 +222,7 @@ private struct FileDialogResult: Codable {
     let buttonClicked: String
     let buttonIdentifier: String?
     let savedPath: String?
+    let openedPath: String?
     let savedPathVerified: Bool
     let savedPathFoundVia: String?
     let savedPathMatchesExpected: Bool?
@@ -235,6 +243,7 @@ private struct FileDialogResult: Codable {
         case buttonClicked
         case buttonIdentifier = "button_identifier"
         case savedPath
+        case openedPath = "opened_path"
         case savedPathVerified
         case savedPathFoundVia = "saved_path_found_via"
         case savedPathMatchesExpected = "saved_path_matches_expected"
