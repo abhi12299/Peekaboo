@@ -32,7 +32,10 @@ struct MCPSetValueSnapshotReuseTests {
     /// A form snapshot whose window, re-read after the write, holds `after`.
     private static func fixture(
         before: [DetectedElement] = Self.form,
-        after: [DetectedElement]) async throws -> MCPSnapshotMutationTestFixture
+        after: [DetectedElement],
+        capturedMetadata: (DetectionMetadata) -> DetectionMetadata = { $0 },
+        rereadMetadata: (DetectionMetadata) -> DetectionMetadata = { $0 }) async throws
+        -> MCPSnapshotMutationTestFixture
     {
         let fixture = try await MCPSnapshotMutationTestFixture.make()
         fixture.automation.uiAutomationOutcomeScript.setDefaultOutcome(.confirmedChange(
@@ -44,12 +47,12 @@ struct MCPSetValueSnapshotReuseTests {
                 snapshotId: fixture.snapshotID,
                 screenshotPath: stored.screenshotPath,
                 elements: DetectedElements(other: before),
-                metadata: stored.metadata))
+                metadata: capturedMetadata(stored.metadata)))
         fixture.automation.accessibilityTree = ElementDetectionResult(
             snapshotId: "reread",
             screenshotPath: "",
             elements: DetectedElements(other: after),
-            metadata: stored.metadata)
+            metadata: rereadMetadata(stored.metadata))
         return fixture
     }
 
@@ -119,6 +122,56 @@ struct MCPSetValueSnapshotReuseTests {
         let response = try await Self.setValue(fixture)
 
         #expect(response.meta?.objectValue?[Self.reusableKey] == .bool(true))
+    }
+
+    /// The same metadata with other warnings, truncation or window.
+    private static func metadata(
+        _ base: DetectionMetadata,
+        warnings: [String]? = nil,
+        truncation: DetectionTruncationInfo? = nil,
+        windowID: Int? = nil) -> DetectionMetadata
+    {
+        let window = base.windowContext
+        return DetectionMetadata(
+            detectionTime: base.detectionTime,
+            elementCount: base.elementCount,
+            method: base.method,
+            warnings: warnings ?? base.warnings,
+            windowContext: windowID.map { id in
+                WindowContext(
+                    applicationName: window?.applicationName,
+                    applicationProcessId: window?.applicationProcessId,
+                    applicationProcessStartIdentity: window?.applicationProcessStartIdentity,
+                    windowTitle: window?.windowTitle,
+                    windowID: id,
+                    windowBounds: window?.windowBounds)
+            } ?? window,
+            isDialog: base.isDialog,
+            truncationInfo: truncation ?? base.truncationInfo)
+    }
+
+    @Test(arguments: ["reread incomplete", "reread truncated", "captured incomplete", "app fallback", "other window"])
+    func `equal nodes from an incomplete or inexact read leave the snapshot stale`(evidence: String) async throws {
+        let incomplete = DetectionTruncationInfo(incompleteAccessibilityRead: true)
+        let fixture = try await Self.fixture(
+            after: Self.form,
+            capturedMetadata: { evidence == "captured incomplete" ? Self.metadata($0, truncation: incomplete) : $0 },
+            rereadMetadata: { base in
+                switch evidence {
+                case "reread incomplete": Self.metadata(base, truncation: incomplete)
+                case "reread truncated": Self.metadata(base, truncation: .init(maxElementCountReached: true))
+                case "app fallback": Self.metadata(
+                        base,
+                        warnings: [DetectionMetadata.applicationScopedAccessibilityFallbackWarning])
+                case "other window": Self.metadata(base, windowID: 4242)
+                default: base
+                }
+            })
+
+        let response = try await Self.setValue(fixture)
+
+        #expect(!response.isError)
+        #expect(response.meta?.objectValue?[Self.reusableKey] == nil)
     }
 
     @Test(arguments: ["added", "moved", "role"])

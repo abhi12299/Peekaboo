@@ -30,13 +30,24 @@ enum MCPSetValueSnapshotReuse {
         }
         guard let captured = try? await context.snapshots.getDetectionResult(snapshotId: snapshotID),
               let window = captured.metadata.windowContext,
-              window.windowID != nil,
+              let windowID = window.windowID,
               window.shouldFocusWebContent != true,
+              self.isCompleteExactWindowRead(captured.metadata, windowID: windowID),
               let reread = try? await context.automation.inspectAccessibilityTree(
-                  windowContext: self.freshReadContext(window))
+                  windowContext: self.freshReadContext(window)),
+              self.isCompleteExactWindowRead(reread.metadata, windowID: windowID)
         else { return false }
         let before = WindowStructure(captured.elements)
         return !before.isEmpty && before == WindowStructure(reread.elements)
+    }
+
+    /// Equal nodes prove nothing when either read may have left elements out: a truncated or incomplete traversal,
+    /// an application-scoped fallback, or another window.
+    private static func isCompleteExactWindowRead(_ metadata: DetectionMetadata, windowID: Int) -> Bool {
+        metadata.truncationInfo?.isTruncated != true &&
+            !metadata.isApplicationScopedAccessibilityFallback &&
+            metadata.applicationScopedAccessibilityFallbackOrigin == nil &&
+            metadata.windowContext?.windowID == windowID
     }
 
     /// The captured window, read again without the AX tree cache and without the menu bar.
