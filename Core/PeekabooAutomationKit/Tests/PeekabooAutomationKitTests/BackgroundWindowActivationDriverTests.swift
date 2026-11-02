@@ -83,6 +83,24 @@ struct BackgroundWindowActivationDriverTests {
             "window 100 receipt bounds: captured none, now 200,150 500×400")
     }
 
+    /// A window on a Space that is not visible is listed as not on screen, but it still takes the focus record
+    /// (verified live for AppKit and Electron windows). Only a window that is off screen while its Space is
+    /// visible (minimized, hidden or ordered out) is refused, and the refusal says so.
+    @Test
+    func `a window that is off screen only because its Space is hidden takes the focus record`() throws {
+        let target = try Self.target()
+        let offScreen = Self.live(isOnScreen: false)
+        func mismatch(_ placement: WindowSpacePlacement) -> String? {
+            BackgroundWindowActivationDriver.liveTargetMismatch(
+                target, kind: .focus, live: offScreen, liveProcessStartIdentity: 800, spacePlacement: placement)
+        }
+
+        #expect(mismatch(.otherSpace(spaceID: 5, spaceNumber: 3)) == nil)
+        #expect(mismatch(.visibleSpace) ==
+            "window 100 on screen: no, although its Space is visible (minimized, hidden or closed)")
+        #expect(mismatch(.unknown) == "window 100 on screen: no")
+    }
+
     private static let capturedBounds = CGRect(x: 200, y: 150, width: 500, height: 400)
 
     private static func target() throws -> UIAutomationTarget.ExactWindow {
