@@ -157,7 +157,7 @@ struct AXTreeCollector {
             resolvedType: elementType)
         let isActionable = self.isElementActionable(element, role: descriptor.role)
         let keyboardShortcut = isActionable ? self.extractKeyboardShortcut(element, role: descriptor.role) : nil
-        let label = self.effectiveLabel(for: element, descriptor: descriptor)
+        let label = self.effectiveLabel(for: element, descriptor: descriptor, deadline: deadline)
 
         var attributes = ElementClassifier.attributes(
             from: ElementClassifier.AttributeInput(
@@ -236,7 +236,11 @@ struct AXTreeCollector {
         self.logger.debug("🔍 Button debug - \(parts.joined(separator: ", "))")
     }
 
-    private func effectiveLabel(for element: Element, descriptor: AXDescriptorReader.Descriptor) -> String? {
+    private func effectiveLabel(
+        for element: Element,
+        descriptor: AXDescriptorReader.Descriptor,
+        deadline: Date) -> String?
+    {
         let info = ElementLabelInfo(
             role: descriptor.role,
             label: descriptor.label,
@@ -252,7 +256,8 @@ struct AXTreeCollector {
                 of: element,
                 parentRole: descriptor.role,
                 children: self.childrenReader,
-                textualNode: self.textReader)
+                textualNode: self.textReader,
+                shouldContinue: { Date() < deadline })
             : []
         return ElementLabelResolver.resolve(
             info: info,

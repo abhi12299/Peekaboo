@@ -49,6 +49,29 @@ struct ChromiumWebContentTraversalTests {
         #expect(published.label == "Quillfield")
     }
 
+    /// The collector's deadline also bounds the per-cell label walk: an observation that runs out of
+    /// time during one walk stops reading descendants instead of finishing up to 64 more AX reads.
+    @Test @MainActor
+    func `label walk stops at the collector deadline`() {
+        let cell = Self.fakeElement(300)
+        let widgets = (0..<40).map { Self.fakeElement(301 + Int32($0)) }
+        var textReads = 0
+        let collector = AXTreeCollector(
+            descriptorReader: { element in
+                element == cell ? .descriptor(Self.descriptor(role: "AXCell", roleDescription: "cell")) : .absent
+            },
+            childrenReader: { element in element == cell ? widgets : [] },
+            textReader: { _ in
+                textReads += 1
+                Thread.sleep(forTimeInterval: 0.02)
+                return AXTextualNode(role: "AXGroup", text: nil)
+            })
+
+        _ = collector.collect(window: cell, deadline: Date().addingTimeInterval(0.1))
+
+        #expect(textReads < 10)
+    }
+
     /// Chrome nests its page under eight levels of browser UI, so the default depth of 12 used to stop
     /// at the table cells. Depth inside web content is counted from the page's AXWebArea.
     @Test @MainActor
