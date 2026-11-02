@@ -28,6 +28,10 @@ final class FakeSavePanel: FileDialogPanelSurface {
     var hiddenPaths: Set<String> = []
     /// When true, pressing the default button with a folder selected does nothing.
     var ignoresFolderOpen = false
+    /// When true, the final save leaves the panel open (as a "Replace?" alert would).
+    var staysOpenOnSave = false
+    /// When set, the name field ignores writes and keeps this value.
+    var lockedName: String?
 
     init(directory: URL, name: String = "Untitled.txt", mode: Mode = .icon) {
         self.directory = directory.resolvingSymlinksInPath()
@@ -99,7 +103,7 @@ final class FakeSavePanel: FileDialogPanelSurface {
 
     func setFilename(_ name: String) throws {
         self.events.append("name \(name)")
-        self.name = name
+        self.name = self.lockedName ?? name
     }
 
     func pressDefaultButton() throws {
@@ -111,6 +115,7 @@ final class FakeSavePanel: FileDialogPanelSurface {
             self.selected = nil
             return
         }
+        if self.staysOpenOnSave { return }
         let url = self.directory.appendingPathComponent(self.name)
         FileManager.default.createFile(atPath: url.path, contents: Data("saved".utf8))
         self.savedURL = url

@@ -50,6 +50,8 @@ public struct BackgroundFileDialogError: Error, LocalizedError, Equatable {
         case selectionNotConfirmed
         /// The panel is not where it must be before saving.
         case wrongFolder
+        /// The name field does not hold the requested file name.
+        case nameNotTaken
         /// The panel closed (saved) while a folder was being opened.
         case closedDuringNavigation
         /// The panel stayed open after the final default-button press.
@@ -99,9 +101,25 @@ public struct BackgroundFileDialogNavigator {
             try await self.navigate(to: directory, steps: &steps)
             try self.requireCurrentFolder(directory)
         }
+        if let filename = destination.filename {
+            let current = try self.panel.filename()
+            guard current == filename else {
+                throw self.failure(
+                    .nameNotTaken,
+                    "The panel's name field shows '\(current ?? "")' instead of '\(filename)'; nothing was saved.",
+                    changed: true)
+            }
+        }
         try self.panel.pressDefaultButton()
         steps.append("default_button")
         try await self.waitUntil { try !self.panel.isPanelOpen() }
+        guard try !self.panel.isPanelOpen() else {
+            throw self.failure(
+                .panelStillOpen,
+                "The panel is still open after its default button was pressed; it may be showing a " +
+                    "confirmation such as Replace. Inspect it with dialog list.",
+                changed: true)
+        }
         let savedPath = destination.directory.flatMap { directory in
             destination.filename.map { directory.appendingPathComponent($0).path }
         }

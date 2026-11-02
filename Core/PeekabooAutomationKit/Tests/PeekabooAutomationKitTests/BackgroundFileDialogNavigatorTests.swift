@@ -100,4 +100,35 @@ struct BackgroundFileDialogNavigatorTests {
         #expect(panel.savedURL == nil)
         #expect(panel.isOpen)
     }
+
+    @Test
+    func `a name the panel did not take is refused before saving`() async throws {
+        let tree = try TemporaryFolderTree(["start"])
+        defer { tree.remove() }
+        let panel = FakeSavePanel(directory: tree.url("start"))
+        panel.lockedName = "Untitled.txt"
+
+        await #expect(throws: BackgroundFileDialogError.self) {
+            try await BackgroundFileDialogNavigator(panel: panel).run(
+                FileDialogDestination(directory: tree.url("start"), filename: "q3.txt"))
+        }
+        #expect(!panel.events.contains("press default"))
+    }
+
+    @Test
+    func `a panel that stays open after saving is reported, not claimed as saved`() async throws {
+        let tree = try TemporaryFolderTree(["start"])
+        defer { tree.remove() }
+        let panel = FakeSavePanel(directory: tree.url("start"))
+        panel.staysOpenOnSave = true
+
+        do {
+            _ = try await BackgroundFileDialogNavigator(panel: panel, timeout: .milliseconds(200)).run(
+                FileDialogDestination(directory: tree.url("start"), filename: "q3.txt"))
+            Issue.record("expected the run to stop")
+        } catch let error as BackgroundFileDialogError {
+            #expect(error.kind == .panelStillOpen)
+            #expect(error.changedPanel)
+        }
+    }
 }
