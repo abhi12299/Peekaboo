@@ -9,8 +9,8 @@ read_when:
 
 `dialog` wraps `DialogService` so you can programmatically inspect, click, set text in, dismiss, or drive file
 dialogs without re-running `see`. Exact targeted click, non-forced dismiss, and input stay in the background by
-default. Global keyboard/coordinate paths are never implicit: targetless input, `file`, and `dismiss --force`
-require `--foreground`.
+default. Global keyboard/coordinate paths are never implicit: targetless input, targetless `file`, and
+`dismiss --force` require `--foreground`.
 
 Without a target, `dialog list` and `dialog click --button "Don't Allow"` discover macOS system-permission alerts
 (including TCC) in the background, checking the focused owner and the allowlisted `com.apple.UserNotificationCenter`
@@ -24,7 +24,7 @@ automatic clicks require complete discovery, one dialog, and one enabled AXPress
 | --- | --- | --- |
 | `click` | Press a dialog button with AX. | `--button <exact label>` is required; app/PID/window targets are optional; `--foreground` may focus first but never enables pointer fallback. |
 | `input` | Set text in a dialog field. | `--text` plus an app/PID/window target default to background AXValue. Use `--foreground` only for targetless/global keyboard input. Optional `--field <label>` or `--index <0-based>` and `--clear`. |
-| `file` | Drive NSOpenPanel/NSSavePanel style dialogs. | `--foreground` is required; an app/PID/window target is optional and recommended. Supports `--path <dir>`, `--name <filename>`, `--select <button>`, `--ensure-expanded`, and `--timeout <duration>`. Save-like actions verify the file exists and return `saved_path`. |
+| `file` | Drive NSOpenPanel/NSSavePanel style dialogs. | With an app/PID/window target and no `--foreground` it runs in the background through accessibility (see below). `--foreground` keeps the keyboard route and also allows a targetless panel. Supports `--path <dir>`, `--name <filename>`, `--select <button>`, `--ensure-expanded`, and `--timeout <duration>`. Save-like actions verify the file exists and return `saved_path`. |
 | `dismiss` | Close the current dialog. | Normal dismissal requires a target and uniquely resolves one cancel/close AXPress button in the background. `--force --foreground` explicitly sends global Escape. |
 | `list` | Read dialog metadata (buttons, text fields, static text) without focusing or mutating it. | Optional `--app`/`--pid`, optional `--window-id`/`--window-title`/`--window-index`, and `--timeout <duration>`. |
 
@@ -43,10 +43,31 @@ automatic clicks require complete discovery, one dialog, and one enabled AXPress
 - Success is confirmed only after the retained dialog or sheet disappears. An accepted press without a verified postcondition is retry-unsafe and requires fresh observation; planning or identity ambiguity is a retry-safe pre-dispatch refusal.
 - Remote targeted list/prepare/click/dismiss require the exact advertised and enabled operation, not merely a 1.25 version number. Missing capabilities refuse before operation transport.
 - Exact targeted `dialog input` resolves and revalidates one process-generation/window target, then sets the selected
-  field through background AXValue. Targetless input uses global keyboard delivery and requires `--foreground`
+  field through background AXValue. `--field` also matches a label shown before the field (the Save panel's
+  "Save As:"); a folder path typed into the Save As name field is refused (use `dialog file`). Targetless input uses global keyboard delivery and requires `--foreground`
   (or `foreground: true` over MCP).
-- `dialog file` and forced dismissal use global keyboard or coordinate events and therefore require foreground
-  consent. For compatibility with interactive foreground workflows, input and file may target the current dialog only
+- Targeted `dialog file` without `--foreground` (and MCP `dialog file` with a target under background-only policy)
+  drives the panel through accessibility only and never activates the app:
+  - `--path` is the folder (it must exist; a path ending in a file name, or a full path passed as `--name`, is split
+    into folder and name; a name whose folder disagrees with `--path` is refused). Folders are compared as real
+    paths, so `/tmp/x` is `/private/tmp/x`, which is how the panel's Where menu shows it.
+  - The run reads the Where popup's menu (current folder, its ancestors, the volume, the computer), chooses the
+    deepest ancestor shared with the destination, then opens each remaining folder from the file list: it selects
+    the entry (AXSelectedChildren, or AXSelected on a list row) and presses the default button, which opens a
+    selected folder. In column view the selection alone moves the panel. AXOpen is never used: it activated the host
+    app in testing. Icon view only exposes visible items, so the list is scrolled through its scroll bar's AXValue.
+  - It sets the name through AXValue, checks the panel shows the requested folder and name, presses Save, and
+    verifies the file on disk. If the panel stays open (for example a Replace confirmation) the result says so.
+  - The default button is pressed for a folder only after the panel confirms the selection, so a failed selection
+    can't save into the wrong folder. Every failure after the first change is reported as indeterminate.
+  - Limits: folders inside hidden folders (`/private`, dot-folders) can't be browsed to and are refused before the
+    panel changes; only the default button is pressed (`--select` other than `default` is refused in this mode); the
+    Where menu is a popup menu, so it shows on screen for a moment; column view is slower (one discovery walk of
+    every column, about 10 s).
+  - Works for in-process sheets and for the sandboxed Open and Save Panel Service (TextEdit) on macOS 27: both
+    expose the panel's tree through the host app's window.
+- `--foreground` `dialog file` and forced dismissal use global keyboard or coordinate events and therefore require
+  foreground consent. For compatibility with interactive foreground workflows, input and file may target the current dialog only
   in that foreground mode. Receipt-pinned non-forced dismiss requires a target.
 - Button clicks and text entry route through `services.dialogs` helpers, which return dictionaries describing what happened; JSON output exposes those details verbatim (`button`, `field`, `text_length`, etc.).
 - `dialog input` accepts either a field label (`--field`) or an index; when neither is provided it targets the first
@@ -73,6 +94,9 @@ peekaboo dialog click --button "Don't Save" --app TextEdit
 
 # Set a targeted password field through background AXValue
 peekaboo dialog input --text hunter2 --field "Password" --clear --app Safari
+
+# Save into a folder in the background (no activation)
+peekaboo dialog file --app TextEdit --path ~/Documents/exports --name report.rtf --json
 
 # Choose a file in an open panel and confirm
 peekaboo dialog file --path ~/Downloads --name report.pdf --select Open --foreground
