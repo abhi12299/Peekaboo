@@ -35,12 +35,14 @@ public enum WindowSpacePlacement: Equatable, Sendable {
         return false
     }
 
-    /// "Space 3" when the number is known, otherwise "another Space".
+    /// "Space 3 (ID 5)" with the number `space list` prints, "another Space (ID 5)" without one.
     public var spaceDescription: String {
         switch self {
-        case let .otherSpace(_, number?):
-            "Space \(number)"
-        case .otherSpace, .visibleSpace, .unknown:
+        case let .otherSpace(id, number?):
+            "Space \(number) (ID \(id))"
+        case let .otherSpace(id, nil):
+            "another Space (ID \(id))"
+        case .visibleSpace, .unknown:
             "another Space"
         }
     }
@@ -58,15 +60,13 @@ extension WindowSpacePlacement {
         }
         let windowSpaceIDs = (windowSpaces as NSArray).compactMap { ($0 as? NSNumber)?.uint64Value }
         var visible = Set<UInt64>()
-        var ordered: [UInt64] = []
         for case let display as [String: Any] in CGSCopyManagedDisplaySpaces(connection) as NSArray {
             if let current = display["Current Space"] as? [String: Any], let id = Self.spaceID(current) {
                 visible.insert(id)
             }
-            for case let space as [String: Any] in display["Spaces"] as? [Any] ?? [] {
-                if let id = Self.spaceID(space) { ordered.append(id) }
-            }
         }
+        // Number the Space the way `space list` does, so the two agree.
+        let ordered = SpaceManagementService().getAllSpaces().map(\.id)
         if visible.isEmpty {
             let active = CGSGetActiveSpace(connection)
             if active != 0 { visible.insert(active) }

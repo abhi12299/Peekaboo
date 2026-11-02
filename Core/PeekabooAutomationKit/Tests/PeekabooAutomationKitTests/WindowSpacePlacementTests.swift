@@ -10,7 +10,7 @@ struct WindowSpacePlacementTests {
             orderedSpaceIDs: [7, 6, 5, 4])
 
         #expect(placement == .otherSpace(spaceID: 5, spaceNumber: 3))
-        #expect(placement.spaceDescription == "Space 3")
+        #expect(placement.spaceDescription == "Space 3 (ID 5)")
     }
 
     @Test
@@ -25,6 +25,6 @@ struct WindowSpacePlacementTests {
         #expect(WindowSpacePlacement.classify(windowSpaceIDs: [], visibleSpaceIDs: [6]) == .unknown)
         #expect(WindowSpacePlacement.classify(windowSpaceIDs: [5], visibleSpaceIDs: []) == .unknown)
         #expect(WindowSpacePlacement.classify(windowSpaceIDs: [5], visibleSpaceIDs: [6]).spaceDescription ==
-            "another Space")
+            "another Space (ID 5)")
     }
 }
