@@ -38,7 +38,7 @@ struct ActionInputDriverControlValueTests {
             actionName: AXActionNames.kAXSetValueAction) == true)
     }
 
-    @Test(arguments: ["2027-3-5", "2027-02-30", "15/03/2027", "next tuesday"])
+    @Test(arguments: ["2027-3-5", "2027-02-30", "15/03/2027", "next tuesday", " 2027-03-15 ", "2027-03-15\n"])
     func `date picker refuses unclear date text before writing anything`(text: String) async {
         let element = ActionInputMockAutomationElement(
             role: "AXDateTimeArea",

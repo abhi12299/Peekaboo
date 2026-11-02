@@ -29,7 +29,8 @@ struct ElementDateValue {
         guard case let .string(raw) = value else {
             throw Self.refusal("Expected \(Self.acceptedFormatsDescription).")
         }
-        let text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        // Not trimmed: the verified readback is compared with the exact requested text.
+        let text = raw
         for candidate in Self.candidates(for: text) {
             let formatter = Self.formatter(candidate.format, timeZone: candidate.timeZone)
             guard let date = formatter.date(from: text), formatter.string(from: date) == text else { continue }
