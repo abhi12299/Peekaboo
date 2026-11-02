@@ -149,9 +149,14 @@ extension DialogService {
         return failure.attributed(to: target.actionTargetReceipt)
     }
 
-    /// Waits for the saved file and returns its path. Save panels may hide the extension in the name field, so a
-    /// file named `<name>.<extension>` written during the run also counts.
-    static func waitForSavedFile(_ path: String, notBefore startedAt: Date) async -> String? {
+    /// Waits for the saved file and returns its path. Save panels may hide the extension in the name field, so
+    /// when the name has no extension of its own, one file named `<name>.<extension>` written during the run also
+    /// counts. A name with an extension must match exactly (never `report.txt.bak` for `report.txt`).
+    static func waitForSavedFile(
+        _ path: String,
+        notBefore startedAt: Date,
+        timeout: Duration = .seconds(3)) async -> String?
+    {
         let directory = (path as NSString).deletingLastPathComponent
         let name = (path as NSString).lastPathComponent
         func isFresh(_ candidate: String) -> Bool {
@@ -160,8 +165,14 @@ extension DialogService {
             else { return false }
             return modified >= startedAt.addingTimeInterval(-2)
         }
-        for _ in 0..<60 {
+        let mayAddExtension = (name as NSString).pathExtension.isEmpty
+        let attempts = max(1, Int(timeout / .milliseconds(50)))
+        for _ in 0..<attempts {
             if isFresh(path) { return path }
+            guard mayAddExtension else {
+                try? await Task.sleep(for: .milliseconds(50))
+                continue
+            }
             let entries = (try? FileManager.default.contentsOfDirectory(atPath: directory)) ?? []
             let withExtension = entries
                 .filter { $0.hasPrefix(name + ".") && !($0.dropFirst(name.count + 1)).contains(".") }

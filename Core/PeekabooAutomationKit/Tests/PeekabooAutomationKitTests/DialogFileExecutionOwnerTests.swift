@@ -117,6 +117,21 @@ struct DialogFileExecutionOwnerTests {
     }
 
     @Test
+    func `a name with its own extension is not verified by a temporary or backup file`() async throws {
+        let tree = try TemporaryFolderTree(["out"])
+        defer { tree.remove() }
+        let startedAt = Date()
+        try Data("x".utf8).write(to: tree.url("out").appendingPathComponent("report.txt.bak"))
+
+        let found = await DialogService.waitForSavedFile(
+            tree.url("out").appendingPathComponent("report.txt").path,
+            notBefore: startedAt,
+            timeout: .milliseconds(200))
+
+        #expect(found == nil)
+    }
+
+    @Test
     func `the saved file may carry an extension the panel hid in the name field`() async throws {
         let tree = try TemporaryFolderTree(["out"])
         defer { tree.remove() }
