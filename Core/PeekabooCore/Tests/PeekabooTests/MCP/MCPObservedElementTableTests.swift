@@ -2,7 +2,7 @@ import CoreGraphics
 import Foundation
 import MCP
 import PeekabooAutomation
-import PeekabooAutomationKit
+@_spi(Testing) import PeekabooAutomationKit
 import PeekabooCore
 import PeekabooFoundation
 import TachikomaMCP
@@ -117,6 +117,23 @@ struct MCPObservedElementTableTests {
         #expect(summary.contains("Text selection elem_2: UTF-16 location 1, length 2"))
         #expect(!summary.contains("Text selection elem_1"))
         #expect(UIElementSummary(Self.field, mutationTargetingAvailable: false).selected_text_range == nil)
+    }
+
+    /// Observation warnings reach only `_meta`, which agents usually never see. A stale-capture warning
+    /// changes how the screenshot must be read, so it belongs in the text the agent reads.
+    @Test
+    @MainActor
+    func `see text names a stale capture but not other observation warnings`() async {
+        let summary = await SeeSummaryBuilder(
+            snapshot: UISnapshot(),
+            elements: DetectedElementSnapshotConverter.convert([Self.button]),
+            screenshotPath: "/synthetic/fixture.png",
+            truncationInfo: nil,
+            traversalBudget: nil,
+            selectionSummaries: [],
+            observationWarnings: ["ax_incomplete_read", CoveredWindowCapturePolicy.staleCaptureWarning]).build()
+        #expect(summary.contains(CoveredWindowCapturePolicy.staleCaptureWarning))
+        #expect(!summary.contains("ax_incomplete_read"))
     }
 
     @Test

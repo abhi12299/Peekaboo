@@ -152,6 +152,7 @@ struct SeeSummaryBuilder {
     let truncationInfo: DetectionTruncationInfo?
     let traversalBudget: AXTraversalBudget?
     let selectionSummaries: [String]
+    var observationWarnings: [String] = []
 
     func build() async -> String {
         var lines = self.headerLines()
@@ -160,6 +161,9 @@ struct SeeSummaryBuilder {
         lines.append("Elements found: \(self.elements.count)")
         lines.append(contentsOf: self.selectionSummaries)
         lines.append(contentsOf: self.truncationWarningLines())
+        for warning in StaleCaptureWarnings.select(self.observationWarnings) {
+            lines.append(contentsOf: ["", "⚠️ \(warning)"])
+        }
         lines.append("")
         lines.append(contentsOf: SeeElementTextFormatter.section(self.elements))
         lines.append("")

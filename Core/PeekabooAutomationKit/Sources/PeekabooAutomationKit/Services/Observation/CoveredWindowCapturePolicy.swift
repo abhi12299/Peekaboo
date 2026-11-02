@@ -2,6 +2,16 @@ import AppKit
 import CoreGraphics
 import Foundation
 
+/// Observation warnings that change how a screenshot must be read. They share one prefix so `see`
+/// can show them in the text an agent reads; other warnings stay in metadata only.
+public enum StaleCaptureWarnings {
+    public static let prefix = "Screenshot may be stale: "
+
+    public static func select(_ warnings: [String]) -> [String] {
+        warnings.filter { $0.hasPrefix(self.prefix) }
+    }
+}
+
 /// Warns when a screenshot of a Chromium-based window is likely stale.
 ///
 /// Chromium stops painting a window that other windows cover completely; macOS reports it occluded.
@@ -11,8 +21,8 @@ import Foundation
 @_spi(Testing) public enum CoveredWindowCapturePolicy {
     /// Stale-capture warnings share the "Screenshot may be stale: " prefix (agreed with the off-Space
     /// warning) and then name the reason.
-    public static let staleCaptureWarning =
-        "Screenshot may be stale: this Chromium-based window is completely covered by other windows " +
+    public static let staleCaptureWarning = StaleCaptureWarnings.prefix +
+        "this Chromium-based window is completely covered by other windows " +
         "and is not repainting. Its accessibility elements are current; the pixels refresh once any part " +
         "of the window is uncovered."
 

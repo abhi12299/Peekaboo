@@ -381,7 +381,8 @@ public struct SeeTool: MCPTool {
             screenshotPath: finalScreenshot,
             truncationInfo: observation.elements?.metadata.truncationInfo,
             traversalBudget: observation.elements?.metadata.windowContext?.traversalBudget,
-            selectionSummaries: ObservedTextSelectionSummary.lines(for: observation.elements?.elements.all ?? []))
+            selectionSummaries: ObservedTextSelectionSummary.lines(for: observation.elements?.elements.all ?? []),
+            observationWarnings: observation.diagnostics.warnings)
             .build()
 
         var content: [MCP.Tool.Content] = [.text(text: summaryText, annotations: nil, _meta: nil)]
