@@ -1,7 +1,8 @@
 import Foundation
 import PeekabooFoundation
 
-/// One host-owned foreground file operation, planned before focus against the complete caller selector.
+/// One host-owned file operation, planned against the complete caller selector. Foreground requests focus the
+/// panel and use keyboard navigation; background requests use accessibility only and never activate the app.
 public struct DialogFileExecutionRequest: Sendable, Codable, Equatable {
     public let target: DialogTargetSelector
     public let path: String?
@@ -9,6 +10,8 @@ public struct DialogFileExecutionRequest: Sendable, Codable, Equatable {
     public let actionButton: String?
     public let ensureExpanded: Bool
     public let focus: DialogForegroundFocusPolicy
+    /// Drive the panel through accessibility only (Where popup, file list, name field, default button).
+    public let background: Bool
 
     public init(
         target: DialogTargetSelector,
@@ -16,7 +19,8 @@ public struct DialogFileExecutionRequest: Sendable, Codable, Equatable {
         filename: String? = nil,
         actionButton: String? = nil,
         ensureExpanded: Bool = false,
-        focus: DialogForegroundFocusPolicy = DialogForegroundFocusPolicy()) throws
+        focus: DialogForegroundFocusPolicy = DialogForegroundFocusPolicy(),
+        background: Bool = false) throws
     {
         guard target.hasTarget else {
             throw DesktopActionFailure.preDispatchRefusal(
@@ -31,10 +35,11 @@ public struct DialogFileExecutionRequest: Sendable, Codable, Equatable {
         self.actionButton = actionButton
         self.ensureExpanded = ensureExpanded
         self.focus = focus
+        self.background = background
     }
 
     private enum CodingKeys: String, CodingKey {
-        case target, path, filename, actionButton, ensureExpanded, focus
+        case target, path, filename, actionButton, ensureExpanded, focus, background
     }
 
     public init(from decoder: any Decoder) throws {
@@ -45,6 +50,7 @@ public struct DialogFileExecutionRequest: Sendable, Codable, Equatable {
             filename: container.decodeIfPresent(String.self, forKey: .filename),
             actionButton: container.decodeIfPresent(String.self, forKey: .actionButton),
             ensureExpanded: container.decode(Bool.self, forKey: .ensureExpanded),
-            focus: container.decode(DialogForegroundFocusPolicy.self, forKey: .focus))
+            focus: container.decode(DialogForegroundFocusPolicy.self, forKey: .focus),
+            background: container.decodeIfPresent(Bool.self, forKey: .background) ?? false)
     }
 }
