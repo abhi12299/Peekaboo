@@ -8,7 +8,7 @@ struct FileDialogDestinationTests {
     func `a full path passed as the name is split into folder and file name`() throws {
         let folder = try Self.makeFolder()
         let destination = try FileDialogDestination.resolve(path: nil, name: folder.path + "/report.txt")
-        #expect(destination.directory?.path == folder.resolvingSymlinksInPath().path)
+        #expect(destination.directory?.path == Self.realPath(folder))
         #expect(destination.filename == "report.txt")
     }
 
@@ -27,14 +27,32 @@ struct FileDialogDestinationTests {
     func `a path to a file with no name splits into folder and file name`() throws {
         let folder = try Self.makeFolder()
         let destination = try FileDialogDestination.resolve(path: folder.path + "/report.txt", name: nil)
-        #expect(destination.directory?.path == folder.resolvingSymlinksInPath().path)
+        #expect(destination.directory?.path == Self.realPath(folder))
         #expect(destination.filename == "report.txt")
 
         let existing = folder.appendingPathComponent("archive.v2", isDirectory: true)
         try FileManager.default.createDirectory(at: existing, withIntermediateDirectories: true)
         let folderOnly = try FileDialogDestination.resolve(path: existing.path, name: nil)
-        #expect(folderOnly.directory?.path == existing.resolvingSymlinksInPath().path)
+        #expect(folderOnly.directory?.path == Self.realPath(existing))
         #expect(folderOnly.filename == nil)
+    }
+
+    @Test
+    func `folders are canonical real paths the way the panel shows them`() throws {
+        // The panel's Where menu lists /tmp/x as Macintosh HD > private > tmp > x.
+        let folder = URL(fileURLWithPath: "/tmp/FileDialogDestinationTests-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+
+        let destination = try FileDialogDestination.resolve(path: folder.path, name: "a.txt")
+
+        #expect(destination.directory?.path == "/private" + folder.path)
+    }
+
+    private static func realPath(_ url: URL) -> String {
+        guard let resolved = realpath(url.path, nil) else { return url.path }
+        defer { free(resolved) }
+        return String(cString: resolved)
     }
 
     private static func makeFolder() throws -> URL {

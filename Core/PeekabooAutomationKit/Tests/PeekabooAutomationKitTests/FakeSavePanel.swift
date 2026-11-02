@@ -34,7 +34,7 @@ final class FakeSavePanel: FileDialogPanelSurface {
     var lockedName: String?
 
     init(directory: URL, name: String = "Untitled.txt", mode: Mode = .icon) {
-        self.directory = directory.resolvingSymlinksInPath()
+        self.directory = directory
         self.name = name
         self.mode = mode
     }
@@ -136,14 +136,16 @@ struct TemporaryFolderTree {
     init(_ relativeFolders: [String]) throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("file-dialog-tree-\(UUID().uuidString)", isDirectory: true)
-            .resolvingSymlinksInPath()
         for folder in relativeFolders {
             try FileManager.default.createDirectory(
                 at: root.appendingPathComponent(folder, isDirectory: true),
                 withIntermediateDirectories: true)
         }
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        self.root = root.resolvingSymlinksInPath()
+        // Real path, as the panel shows it: /var/folders/... is /private/var/folders/...
+        guard let resolved = realpath(root.path, nil) else { throw CocoaError(.fileNoSuchFile) }
+        defer { free(resolved) }
+        self.root = URL(fileURLWithPath: String(cString: resolved), isDirectory: true)
     }
 
     func url(_ relative: String) -> URL {

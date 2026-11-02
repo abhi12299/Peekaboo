@@ -287,7 +287,7 @@ final class AXFileDialogPanelSurface: FileDialogPanelSurface {
     }
 
     private static func normalized(_ path: String) -> String {
-        URL(fileURLWithPath: path).standardizedFileURL.resolvingSymlinksInPath().path
+        FileDialogDestination.canonicalPath(path)
     }
 }
 

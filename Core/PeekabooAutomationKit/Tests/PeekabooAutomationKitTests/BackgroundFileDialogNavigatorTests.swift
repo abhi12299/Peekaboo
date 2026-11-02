@@ -75,9 +75,9 @@ struct BackgroundFileDialogNavigatorTests {
         do {
             _ = try await BackgroundFileDialogNavigator(panel: panel).run(
                 FileDialogDestination(directory: tree.url("run/exports"), filename: "q3.txt"))
-            Issue.record("expected the run to stop")
+            Issue.record("expected the run to stop \(panel.events)")
         } catch let error as BackgroundFileDialogError {
-            #expect(error.kind == .folderUnreachable)
+            #expect(error.kind == .folderUnreachable, "\(panel.events) \(error)")
             #expect(error.message.contains(tree.url("run/exports").path))
         }
         #expect(panel.savedURL == nil)

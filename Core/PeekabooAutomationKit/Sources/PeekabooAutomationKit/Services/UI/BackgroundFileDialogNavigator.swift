@@ -198,7 +198,8 @@ public struct BackgroundFileDialogNavigator {
 
     /// The folders from the volume root down to `directory`, the way the panel's Where menu presents them.
     static func folderChain(to directory: URL) -> [URL] {
-        let components = directory.standardizedFileURL.pathComponents
+        // Not standardizedFileURL: it rewrites /private/var to /var, but the panel shows the real path.
+        let components = (directory.path as NSString).pathComponents
         let rootDepth = components.count > 2 && components[1] == "Volumes" ? 3 : 1
         var chain: [URL] = []
         var url = URL(fileURLWithPath: NSString.path(withComponents: Array(components.prefix(rootDepth))))
