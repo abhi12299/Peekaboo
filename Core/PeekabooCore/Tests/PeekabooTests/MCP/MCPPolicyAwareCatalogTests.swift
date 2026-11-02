@@ -151,16 +151,19 @@ struct MCPPolicyAwareCatalogTests {
             Issue.record("Expected background-only Dialog schema")
             return
         }
-        #expect(actions == ["list", "click", "input", "dismiss"].map(Value.string))
+        // Targeted `file` runs in the background through accessibility, so it and its inputs stay available;
+        // the foreground-only inputs do not.
+        #expect(actions == ["list", "click", "input", "file", "dismiss"].map(Value.string))
         #expect(properties["button"] != nil)
         #expect(properties["text"] != nil)
         #expect(properties["field"] != nil)
-        #expect(properties["path"] == nil)
-        #expect(properties["name"] == nil)
-        #expect(properties["select"] == nil)
+        #expect(properties["path"] != nil)
+        #expect(properties["name"] != nil)
+        #expect(properties["select"] != nil)
         #expect(properties["ensure_expanded"] == nil)
         #expect(properties["force"] == nil)
         #expect(properties["foreground"] == nil)
+        #expect(tool.description.contains("targeted `file`"))
         #expect(tool.description.contains("targeted non-forced `dismiss`"))
 
         let foregroundContext = await MCPToolTestHelpers.makeContext(executionPolicy: .foregroundAllowed)
