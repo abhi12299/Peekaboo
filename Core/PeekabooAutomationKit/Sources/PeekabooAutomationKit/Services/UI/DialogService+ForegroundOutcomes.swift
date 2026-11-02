@@ -89,6 +89,9 @@ extension DialogService {
                 let targetField = try self.exactDialogInputField(
                     in: plan.dialog,
                     identifier: request.fieldIdentifier)
+                if let refusal = Self.saveNameInputRefusal(field: targetField, text: request.text) {
+                    throw refusal
+                }
                 return try await self.executeBackgroundDialogInput(
                     request,
                     plan: plan,
@@ -118,6 +121,9 @@ extension DialogService {
                 let targetField = try self.exactDialogInputField(
                     in: plan.dialog,
                     identifier: request.fieldIdentifier)
+                if let refusal = Self.saveNameInputRefusal(field: targetField, text: request.text) {
+                    throw refusal
+                }
                 return try await self.executeDialogInput(RetainedDialogInputPlan(
                     text: request.text,
                     fieldIdentifier: request.fieldIdentifier,
@@ -863,6 +869,17 @@ extension DialogService {
                 hint: "List the exact dialog and provide one unique field label, placeholder, or index.")
         }
         return field
+    }
+
+    /// Save panels keep a typed "/" in the file name (the file is saved, misnamed, in the current folder), so a
+    /// path written into the Save As name field is refused before dispatch.
+    static func saveNameInputRefusal(field: Element, text: String) -> DesktopActionFailure? {
+        guard field.identifier() == "saveAsNameTextField", text.contains("/") else { return nil }
+        return DesktopActionFailure.preDispatchRefusal(
+            reason: .invalidRequest,
+            message: "The Save As field takes a bare file name; '\(text)' contains a folder path, which the panel " +
+                "would save as a misnamed file in its current folder.",
+            hint: "Use dialog file with path (the folder) and name (the file name) instead.")
     }
 
     /// Fields whose label is a separate static text shown just before them, such as the Save panel's

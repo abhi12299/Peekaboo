@@ -27,6 +27,16 @@ struct DialogInputFieldLabelTests {
         #expect(field == fixture.name)
     }
 
+    @Test
+    func `a path typed into the Save As name is refused with a pointer to the file action`() throws {
+        let fixture = Self.savePanel()
+        let refusal = try #require(DialogService.saveNameInputRefusal(field: fixture.name, text: "/tmp/exports/q3.txt"))
+        #expect(refusal.message.contains("bare file name"))
+        #expect(refusal.hint?.contains("dialog file") == true)
+        #expect(DialogService.saveNameInputRefusal(field: fixture.name, text: "q3.txt") == nil)
+        #expect(DialogService.saveNameInputRefusal(field: fixture.tags, text: "a/b") == nil)
+    }
+
     private static func node(
         _ id: Int32,
         role: String,
