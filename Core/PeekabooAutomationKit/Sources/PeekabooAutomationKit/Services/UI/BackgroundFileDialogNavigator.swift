@@ -208,13 +208,20 @@ public struct BackgroundFileDialogNavigator {
                 "The panel did not confirm the selection of \(folder.path); the default button was not pressed.",
                 changed: true)
         }
-        if try self.panel.currentFolderName() == name {
+        if try self.panelIsAt(folder) {
             steps.append("select:\(name)")
             return
         }
         try self.panel.pressDefaultButton()
-        try await self.waitUntil {
-            try !self.panel.isPanelOpen() || self.panel.currentFolderName() == name
+        if Self.sharesNameWithParent(folder) {
+            // The Where value can't show the move; the folder's own entry leaves the list once it is open.
+            try await self.waitUntil {
+                try !self.panel.isPanelOpen() || self.panel.item(atPath: folder.path) == nil
+            }
+        } else {
+            try await self.waitUntil {
+                try !self.panel.isPanelOpen() || self.panel.currentFolderName() == name
+            }
         }
         guard try self.panel.isPanelOpen() else {
             throw self.failure(
@@ -228,9 +235,25 @@ public struct BackgroundFileDialogNavigator {
 
     // MARK: - Helpers
 
+    /// Whether the panel shows `folder`. The Where value is a display name; when the folder and its parent share
+    /// it, the Where menu's full ancestry decides (one brief menu).
+    private func panelIsAt(_ folder: URL) throws -> Bool {
+        guard try self.panel.currentFolderName() == Self.displayName(folder) else { return false }
+        guard Self.sharesNameWithParent(folder) else { return true }
+        let titles = try self.panel.openLocationMenu()
+        try self.panel.cancelLocationMenu()
+        let names = Self.folderChain(to: folder).map(Self.displayName)
+        guard let volumeIndex = titles.firstIndex(of: names[0]) else { return false }
+        return Array(titles[0...volumeIndex].reversed()) == names
+    }
+
+    static func sharesNameWithParent(_ folder: URL) -> Bool {
+        folder.path != "/" && self.displayName(folder) == self.displayName(folder.deletingLastPathComponent())
+    }
+
     private func requireCurrentFolder(_ folder: URL) throws {
         let current = try self.panel.currentFolderName()
-        guard current == Self.displayName(folder) else {
+        guard try self.panelIsAt(folder) else {
             throw self.failure(
                 .wrongFolder,
                 "The panel shows the folder '\(current ?? "unknown")' instead of \(folder.path); nothing was saved.",

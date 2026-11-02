@@ -178,4 +178,19 @@ struct BackgroundFileDialogNavigatorTests {
         #expect(!panel.events.contains { $0.hasPrefix("menu.choose") || $0.hasPrefix("name") })
         #expect(panel.directory.path == tree.url("a/start").path)
     }
+
+    @Test(arguments: [FakeSavePanel.Mode.icon, .column])
+    func `a child folder with its parent's name is opened, not mistaken for the parent`(
+        mode: FakeSavePanel.Mode) async throws
+    {
+        let tree = try TemporaryFolderTree(["x/rep/rep"])
+        defer { tree.remove() }
+        let panel = FakeSavePanel(directory: tree.url("x/rep"), mode: mode)
+
+        let report = try await BackgroundFileDialogNavigator(panel: panel, timeout: .milliseconds(300)).run(
+            FileDialogDestination(directory: tree.url("x/rep/rep"), filename: "q3.txt"))
+
+        #expect(report.savedPath == tree.url("x/rep/rep").appendingPathComponent("q3.txt").path)
+        #expect(panel.savedURL?.path == report.savedPath)
+    }
 }
