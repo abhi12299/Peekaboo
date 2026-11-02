@@ -388,6 +388,12 @@ public final class DesktopObservationService: DesktopObservationActionResultProv
         try? await Task.sleep(for: duration)
     }
 
+    /// Names a window capture that may be stale because the window is on a Space no display shows
+    /// (Chromium and Electron windows there neither repaint nor update their accessibility tree).
+    var offSpaceWindowCaptureWarning: @MainActor (pid_t, CGWindowID) -> String? = { pid, windowID in
+        OffSpaceCapturePolicy.liveWarning(processIdentifier: pid, windowID: windowID)
+    }
+
     /// Waits before the one retry of a passive observation whose accessibility read came back incomplete.
     var incompleteAccessibilityRetryPause: @MainActor (Duration) async -> Void = { duration in
         try? await Task.sleep(for: duration)
@@ -591,6 +597,9 @@ public final class DesktopObservationService: DesktopObservationActionResultProv
             tracer.record("desktop.observe", start: observeStart)
 
             var warnings = roiResult.capture.warning.map { [$0] } ?? []
+            if let offSpaceWarning = self.offSpaceWindowWarning(for: roiResult.capture) {
+                warnings.append(offSpaceWarning)
+            }
             warnings.append(contentsOf: roiResult.ocr?.warnings ?? [])
             warnings.append(contentsOf: roiResult.elements?.metadata.warnings ?? [])
             warnings = warnings.reduce(into: []) { unique, warning in

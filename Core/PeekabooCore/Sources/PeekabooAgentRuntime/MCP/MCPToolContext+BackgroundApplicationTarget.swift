@@ -144,7 +144,10 @@ extension MCPToolContext {
                 snapshotID: snapshotID,
                 capturedBounds: identity.exactWindow?.bounds,
                 liveBounds: live.window?.identity.capturedBounds,
-                liveIsOnScreen: live.window?.selectionWindow.isOnScreen)
+                liveIsOnScreen: live.window?.selectionWindow.isOnScreen,
+                spacePlacement: Self.spacePlacementForFrameChange(
+                    windowID: identity.exactWindow?.identity.windowID,
+                    liveIsOnScreen: live.window?.selectionWindow.isOnScreen))
         }
     }
 
@@ -155,16 +158,33 @@ extension MCPToolContext {
         var capturedBounds: CGRect?
         var liveBounds: CGRect?
         var liveIsOnScreen: Bool?
+        /// Where the live window is when it is not on screen; a window on a hidden Space is listed at a shifted
+        /// frame without having moved.
+        var spacePlacement: WindowSpacePlacement?
 
         var description: String {
             var frames = "captured \(WindowIdentityDiagnostics.bounds(self.capturedBounds)), " +
                 "now \(WindowIdentityDiagnostics.bounds(self.liveBounds))"
+            if let placement = self.spacePlacement, placement.isOtherSpace {
+                return "window \(self.windowID.map(String.init) ?? "?") is now on \(placement.spaceDescription), " +
+                    "which no display shows, and macOS lists it there at another frame (\(frames)); it did not " +
+                    "necessarily move. Snapshot '\(self.snapshotID)' no longer matches it: run `see` on the window " +
+                    "again (it works on another Space) and use the new snapshot. Element clicks, `press` and " +
+                    "`type` reach the window there."
+            }
             if self.liveIsOnScreen == false {
                 frames += ", not on screen"
             }
             return "window \(self.windowID.map(String.init) ?? "?") moved or resized after snapshot " +
                 "'\(self.snapshotID)' was taken (\(frames)); run `see` again and use the new snapshot"
         }
+    }
+
+    /// The Space of a window whose frame no longer matches its snapshot, read only when it is not on screen.
+    @MainActor
+    static func spacePlacementForFrameChange(windowID: Int?, liveIsOnScreen: Bool?) -> WindowSpacePlacement? {
+        guard liveIsOnScreen == false, let windowID, let id = CGWindowID(exactly: windowID) else { return nil }
+        return WindowSpacePlacement.live(windowID: id)
     }
 
     /// Whether a background snapshot mutation may run on a window that only moved to another Space. Keyboard input

@@ -51,7 +51,8 @@ enum BackgroundWindowActivationDriver {
                 target,
                 kind: kind,
                 live: SystemIdentityResolver.windowIdentity(windowID),
-                liveProcessStartIdentity: SystemIdentityResolver.processStartIdentity(pid))
+                liveProcessStartIdentity: SystemIdentityResolver.processStartIdentity(pid),
+                spacePlacement: WindowSpacePlacement.live(windowID: windowID))
         } else {
             "process \(pid) has no process serial number"
         }
@@ -75,12 +76,14 @@ enum BackgroundWindowActivationDriver {
     }
 
     /// What differs between the captured target and its live WindowServer row, or nil when the record may be
-    /// sent. Focus requires the captured, visible window; undo only the same window and owner generation.
+    /// sent. Focus requires the captured window, visible or on a Space that is not showing; undo only the same
+    /// window and owner generation. `spacePlacement` is read only for a window that is not on screen.
     static func liveTargetMismatch(
         _ target: UIAutomationTarget.ExactWindow,
         kind: RecordKind,
         live: SystemWindowIdentity?,
-        liveProcessStartIdentity: UInt64?) -> String?
+        liveProcessStartIdentity: UInt64?,
+        spacePlacement: @autoclosure () -> WindowSpacePlacement = .unknown) -> String?
     {
         let windowID = target.identity.windowID
         guard let live else { return "window \(windowID) is no longer listed" }
@@ -117,7 +120,15 @@ enum BackgroundWindowActivationDriver {
             differences.append("layer: now \(live.layer), normal \(normalLayer)")
         }
         if focus, !live.isOnScreen {
-            differences.append("on screen: no")
+            // A window on a Space that is not showing is listed as off screen but still takes the record.
+            switch spacePlacement() {
+            case .otherSpace:
+                break
+            case .visibleSpace:
+                differences.append("on screen: no, although its Space is visible (minimized, hidden or closed)")
+            case .unknown:
+                differences.append("on screen: no")
+            }
         }
         if focus, !(live.alpha > 0) {
             differences.append("alpha: now \(live.alpha)")

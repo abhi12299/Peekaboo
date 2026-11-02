@@ -419,6 +419,8 @@ struct MCPToolExecutionTests {
         let row = try #require(rows.first?.objectValue)
         #expect(Set(row.keys) == [
             "window_id",
+            "screen_state",
+            "space_id",
             "observation_capability",
             "observation_capability_reason",
         ])

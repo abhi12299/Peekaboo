@@ -1,3 +1,4 @@
+import AppKit
 import ApplicationServices
 import AXorcist
 import CoreGraphics
@@ -11,8 +12,12 @@ import PeekabooFoundation
 struct BackgroundPositionalClickRouter {
     typealias HitTester = @MainActor (_ point: CGPoint, _ pid: pid_t) -> [any AutomationElementRepresenting]
     typealias WindowIdentityValidator = @MainActor (_ identity: WindowMutationIdentity, _ bounds: CGRect) -> Bool
+    typealias ApplicationKindReader = @MainActor (_ pid: pid_t) -> WindowRoutedApplicationKind?
+    typealias SpacePlacementReader = @MainActor (_ windowID: CGWindowID) -> WindowSpacePlacement
 
     private let hitTest: HitTester
+    private let applicationKind: ApplicationKindReader
+    private let spacePlacement: SpacePlacementReader
     private let isAccessibilityTrusted: @MainActor () -> Bool
     private let validateWindowIdentity: WindowIdentityValidator
     private let pointerDriver: WindowRoutedPointerDriver
@@ -22,6 +27,10 @@ struct BackgroundPositionalClickRouter {
         hitTest: @escaping HitTester = { point, pid in
             BackgroundInputDriver.hitTestCandidates(at: point, targetProcessIdentifier: pid)
         },
+        applicationKind: @escaping ApplicationKindReader = { pid in
+            NSRunningApplication(processIdentifier: pid).map(WindowRoutedApplicationClassifier.kind(of:))
+        },
+        spacePlacement: @escaping SpacePlacementReader = { WindowSpacePlacement.live(windowID: $0) },
         isAccessibilityTrusted: @escaping @MainActor () -> Bool = { AXIsProcessTrusted() },
         validateWindowIdentity: @escaping WindowIdentityValidator = {
             SystemIdentityResolver.validateWindowMutationIdentity($0, expectedBounds: $1)
@@ -30,6 +39,8 @@ struct BackgroundPositionalClickRouter {
         focusSession: BackgroundFocusSession = BackgroundFocusSession())
     {
         self.hitTest = hitTest
+        self.applicationKind = applicationKind
+        self.spacePlacement = spacePlacement
         self.isAccessibilityTrusted = isAccessibilityTrusted
         self.validateWindowIdentity = validateWindowIdentity
         self.pointerDriver = pointerDriver
@@ -88,12 +99,33 @@ struct BackgroundPositionalClickRouter {
         count: Int,
         target: UIAutomationTarget.ExactWindow) async throws -> DesktopActionOutcome
     {
+        try self.refuseUnreachableOffSpacePointer(target)
         guard button == .left else {
             return try await self.postWindowRoutedClick(at: point, button: button, count: count, target: target)
         }
         return try await self.focusSession.perform(target: target) {
             try await self.postWindowRoutedClick(at: point, button: button, count: count, target: target)
         }
+    }
+
+    /// Chromium and Electron windows on a Space that is not showing take keyboard input and accessibility
+    /// actions but drop pointer events, even inside the focus session. Refuse before anything is sent.
+    private func refuseUnreachableOffSpacePointer(_ target: UIAutomationTarget.ExactWindow) throws {
+        guard let kind = self.applicationKind(target.identity.ownerProcessIdentifier),
+              kind == .chromium || kind == .electron,
+              let windowID = CGWindowID(exactly: target.identity.windowID)
+        else { return }
+        let placement = self.spacePlacement(windowID)
+        guard placement.isOtherSpace else { return }
+        let app = kind == .chromium ? "Chromium" : "Electron"
+        throw DesktopActionFailure.preDispatchRefusal(
+            reason: .operationUnsupported,
+            message: "Background pointer click refused: window \(target.identity.windowID) is on " +
+                "\(placement.spaceDescription), which is not showing, and \(app) windows there do not receive " +
+                "pointer events. Nothing was sent.",
+            hint: "Click the element by its element ID from `see` (an accessibility press works on another " +
+                "Space), or use `press` or `type`, which reach the window there. This pointer click is refused " +
+                "again until the window is on a visible Space.")
     }
 
     private func postWindowRoutedClick(

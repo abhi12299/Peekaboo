@@ -15,6 +15,7 @@ struct WindowListFormatter {
     let identifier: String
     let windows: [ServiceWindowInfo]
     let details: Set<WindowDetail>
+    var spaces = SpaceVisibility(visibleSpaceIDs: [], orderedSpaceIDs: [])
 
     func response() -> ToolResponse {
         var lines = self.headerLines()
@@ -23,7 +24,7 @@ struct WindowListFormatter {
         let baseMeta: Value = .object([
             "window_count": .int(self.windows.count),
             "app": self.appInfo?.name != nil ? .string(self.appInfo!.name) : .string(self.identifier),
-            "windows": .array(self.windows.map(Self.windowMetadata)),
+            "windows": .array(self.windows.map(self.windowMetadata)),
         ])
         let summary = ToolEventSummary(
             targetApp: self.appInfo?.name ?? self.identifier,
@@ -71,7 +72,8 @@ struct WindowListFormatter {
             parts.append("ID: \(window.windowID)")
         }
         if self.details.contains(.offScreen) {
-            parts.append(window.isOffScreen ? "OFF-SCREEN" : "ON-SCREEN")
+            // The on-screen flag and geometry alone call a window on another Space ON-SCREEN.
+            parts.append(WindowScreenState.of(window, spaces: self.spaces).label)
         }
         if self.details.contains(.bounds) {
             let bounds = window.bounds
@@ -97,9 +99,11 @@ struct WindowListFormatter {
         }
     }
 
-    private static func windowMetadata(_ window: ServiceWindowInfo) -> Value {
+    private func windowMetadata(_ window: ServiceWindowInfo) -> Value {
         .object([
             "window_id": .int(window.windowID),
+            "screen_state": .string(WindowScreenState.of(window, spaces: self.spaces).metadataValue),
+            "space_id": window.spaceID.map { .int(Int($0)) } ?? .null,
             "observation_capability": window.observationCapability.map {
                 .string($0.mode.rawValue)
             } ?? .null,

@@ -78,6 +78,24 @@ struct BackgroundFocusSessionTests {
         #expect(recorder.steps.isEmpty)
     }
 
+    /// The benchmark saw five identical retries after "it is safe to retry" when the cause was persistent.
+    /// The refusal still says nothing was sent, but it no longer invites an unchanged retry.
+    @Test
+    func `a refusal that outlived its own retry does not invite another blind retry`() async throws {
+        let recorder = Recorder()
+        recorder.focusRecordError = Self.targetChangedRefusal()
+        do {
+            try await recorder.session().perform(target: Self.target()) { recorder.steps.append(.action) }
+            Issue.record("Expected a preparation refusal")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.retrySafety == .safe)
+            #expect(!failure.message.contains("safe to retry"))
+            #expect(failure.message.contains("nothing was sent"))
+            #expect(failure.hint?.contains("refused the same way") == true)
+            #expect(failure.hint?.contains("`see`") == true)
+        }
+    }
+
     @Test
     func `uncertain focus record delivery is undone before refusing`() async throws {
         let recorder = Recorder()

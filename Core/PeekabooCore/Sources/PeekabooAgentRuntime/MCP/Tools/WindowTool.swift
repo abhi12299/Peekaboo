@@ -9,6 +9,8 @@ import TachikomaMCP
 public struct WindowTool: MCPTool {
     private let logger = os.Logger(subsystem: "boo.peekaboo.mcp", category: "WindowTool")
     let context: MCPToolContext
+    /// Which Spaces the displays show, so the listing can say a window is on another Space.
+    let spaceVisibility: @MainActor @Sendable () -> SpaceVisibility
 
     public let name = "window"
 
@@ -104,7 +106,12 @@ public struct WindowTool: MCPTool {
     }
 
     public init(context: MCPToolContext = .shared) {
+        self.init(context: context, spaceVisibility: { SpaceVisibility.live() })
+    }
+
+    init(context: MCPToolContext, spaceVisibility: @escaping @MainActor @Sendable () -> SpaceVisibility) {
         self.context = context
+        self.spaceVisibility = spaceVisibility
     }
 
     @MainActor
@@ -300,11 +307,13 @@ public struct WindowTool: MCPTool {
 
     private func listWindows(app: String, details: Set<WindowDetail>) async throws -> ToolResponse {
         let output = try await self.context.applications.listWindows(for: app, timeout: nil)
+        let spaces = await self.spaceVisibility()
         return WindowListFormatter(
             appInfo: output.data.targetApplication,
             identifier: app,
             windows: output.data.windows,
-            details: details).response()
+            details: details,
+            spaces: spaces).response()
     }
 
     // MARK: - Helper Methods

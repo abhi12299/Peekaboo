@@ -109,13 +109,14 @@ struct BackgroundFocusSession {
         }
     }
 
-    /// The action never ran, so the caller may retry the whole request.
+    /// The action never ran, so a retry cannot duplicate input. The session already retried a refusal once, so
+    /// the cause has outlived a pause: say so instead of inviting the same request again.
     private static func preparationRefusal(_ error: any Error) -> DesktopActionFailure {
         .preDispatchRefusal(
             reason: (error as? DesktopActionFailure)?.outcome.refusalReason ?? .targetUnavailable,
-            message: "Background focus preparation failed, so the action was not dispatched; " +
-                "it is safe to retry.",
-            hint: "Observe the target window again before retrying.",
+            message: "Background focus preparation failed, so the action was not dispatched and nothing was sent.",
+            hint: "The same request will be refused the same way until the cause below changes. Run `see` on " +
+                "the window again; if it is minimized, hidden or closed, restore it or pick another window.",
             causeDescription: error.localizedDescription)
     }
 
