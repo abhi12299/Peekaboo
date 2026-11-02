@@ -34,6 +34,7 @@ public final class HotkeyService {
     private let desktopOperationExecutor: DesktopOperationExecutor
     private let operationFinalizer: @MainActor () -> Void
     private let backgroundFocusSession: BackgroundFocusSession?
+    private let applicationKind: @MainActor (pid_t) -> WindowRoutedApplicationKind?
 
     public convenience init(
         inputPolicy: UIInputPolicy = .currentBehavior,
@@ -93,7 +94,10 @@ public final class HotkeyService {
             },
         desktopOperationExecutor: DesktopOperationExecutor = DesktopOperationExecutor(),
         operationFinalizer: @escaping @MainActor () -> Void = {},
-        backgroundFocusSession: BackgroundFocusSession? = nil)
+        backgroundFocusSession: BackgroundFocusSession? = nil,
+        applicationKind: @escaping @MainActor (pid_t) -> WindowRoutedApplicationKind? = { pid in
+            NSRunningApplication(processIdentifier: pid).map(WindowRoutedApplicationClassifier.kind(of:))
+        })
     {
         self.inputPolicy = inputPolicy
         self.actionInputDriver = actionInputDriver
@@ -111,6 +115,7 @@ public final class HotkeyService {
         self.desktopOperationExecutor = desktopOperationExecutor
         self.operationFinalizer = operationFinalizer
         self.backgroundFocusSession = backgroundFocusSession
+        self.applicationKind = applicationKind
     }
 
     private static func defaultTargetedEventPoster(_ event: CGEvent, _ pid: pid_t) {
@@ -331,7 +336,7 @@ public final class HotkeyService {
                     }
                     // Prepared paste already made the window key through its own preparation.
                     let outcome = try await self.withBackgroundFocus(
-                        of: automationTarget, enabled: !prepareBackgroundWindow)
+                        of: automationTarget, chord: plannedChord, enabled: !prepareBackgroundWindow)
                     {
                         try await self.performTargetedHotkey(
                             parsedKeys: parsedKeys, plannedChord: plannedChord, holdDuration: holdDuration,
@@ -374,15 +379,36 @@ public final class HotkeyService {
     /// shortcut handling sees them as it would for its frontmost window.
     private func withBackgroundFocus<T>(
         of automationTarget: UIAutomationTarget,
+        chord: HotkeyPlan?,
         enabled: Bool,
         _ action: @MainActor () async throws -> T) async throws -> T
     {
         guard enabled, let session = self.backgroundFocusSession,
-              let exactWindow = automationTarget.exactWindow
+              let exactWindow = automationTarget.exactWindow,
+              !self.reachesFocusedViewWithoutFocusSession(chord, exactWindow: exactWindow)
         else {
             return try await action()
         }
         return try await session.perform(target: exactWindow, action: action)
+    }
+
+    /// The focus record makes the target app briefly active (about 0.6 s per key). An AppKit window that already
+    /// holds its app's keyboard focus takes plain keys without it: measured with text, arrows, Tab and Delete.
+    /// Return, Escape and function keys stay in the session because they press default and cancel buttons
+    /// through key equivalents, which need a key window (Return without the record did not press the default
+    /// button). Chromium, Electron and Catalyst windows drop plain keys without the record.
+    private func reachesFocusedViewWithoutFocusSession(
+        _ chord: HotkeyPlan?,
+        exactWindow: UIAutomationTarget.ExactWindow) -> Bool
+    {
+        guard let chord, exactWindow.focusedElement != nil,
+              chord.modifierFlags.intersection([.maskCommand, .maskControl, .maskAlternate]).isEmpty,
+              !["return", "escape"].contains(chord.primaryKey),
+              !(chord.primaryKey.hasPrefix("f") && Int(chord.primaryKey.dropFirst()) != nil)
+        else {
+            return false
+        }
+        return self.applicationKind(exactWindow.identity.ownerProcessIdentifier) == .appKit
     }
 
     private func performTargetedHotkey(

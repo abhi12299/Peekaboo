@@ -121,6 +121,49 @@ struct HotkeyServiceBackgroundFocusSessionTests {
         #expect(result.outcome?.dispatchState.unitCount?.rawValue == 8)
     }
 
+    /// Plain keys reach the focused view of an AppKit window that already holds its app's keyboard focus with no
+    /// focus record (measured: text, arrows, Tab, Delete), so they skip the session and its brief activation.
+    @Test(arguments: ["left", "tab", "space", "a", "shift,tab", "delete"])
+    func `plain keys to a focused AppKit window skip the focus session`(keys: String) async throws {
+        let log = FocusSessionLog()
+        let result = try await log.service().hotkey(
+            keys: keys, holdDuration: 50, automationTarget: Self.target(focusedElement: true))
+        #expect(!log.steps.contains(.record(.focus)))
+        #expect(log.steps.filter { $0 == .key(.keyDown) }.count == 1)
+        for event in log.keyEvents {
+            #expect(event.getIntegerValueField(CGEventField(rawValue: 51)!) == 100)
+        }
+        #expect(result.outcome?.state == .dispatchedUnverified)
+    }
+
+    /// Return and Escape press default and cancel buttons through key equivalents, which need a key window
+    /// (measured: Return without the record ended editing but did not press the default button).
+    @Test(arguments: ["return", "escape", "f5", "cmd,a", "ctrl,left", "alt,left"])
+    func `key equivalents and modified chords keep the focus session`(keys: String) async throws {
+        let log = FocusSessionLog()
+        _ = try await log.service().hotkey(
+            keys: keys, holdDuration: 50, automationTarget: Self.target(focusedElement: true))
+        #expect(log.steps.first == .record(.focus))
+        #expect(log.steps.last == .record(.undo))
+    }
+
+    /// Chromium and Electron drop plain keys without the record (measured), and an unfocused window needs it.
+    @Test(arguments: [WindowRoutedApplicationKind.chromium, .electron, .catalyst])
+    func `plain keys keep the focus session outside AppKit`(kind: WindowRoutedApplicationKind) async throws {
+        let log = FocusSessionLog()
+        log.applicationKind = kind
+        _ = try await log.service().hotkey(
+            keys: "left", holdDuration: 50, automationTarget: Self.target(focusedElement: true))
+        #expect(log.steps.first == .record(.focus))
+    }
+
+    @Test
+    func `plain keys keep the focus session for a window that does not hold keyboard focus`() async throws {
+        let log = FocusSessionLog()
+        _ = try await log.service().hotkey(keys: "left", holdDuration: 50, automationTarget: Self.target())
+        #expect(log.steps.first == .record(.focus))
+    }
+
     static let bounds = CGRect(x: 200, y: 150, width: 500, height: 400)
     static let identity = WindowMutationIdentity(
         windowID: 100, ownerProcessIdentifier: getpid(), ownerProcessStartIdentity: 800)
@@ -151,6 +194,7 @@ final class FocusSessionLog {
     var steps: [Step] = []
     var keyEvents: [CGEvent] = []
     var environment: [String: String] = [:]
+    var applicationKind: WindowRoutedApplicationKind? = .appKit
 
     var focused: Bool {
         self.steps.contains(.record(.focus))
@@ -181,7 +225,8 @@ final class FocusSessionLog {
             holdSleeper: { _ in },
             heldInterEventDelay: {},
             desktopOperationExecutor: desktopOperationExecutor,
-            backgroundFocusSession: self.session())
+            backgroundFocusSession: self.session(),
+            applicationKind: { _ in self.applicationKind })
     }
 
     /// The window becomes its app's key window, with focus inside it, only once the focus record lands.
