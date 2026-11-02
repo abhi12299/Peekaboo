@@ -100,7 +100,7 @@ import Foundation
     /// Table cells carry no text of their own; their content lives in static-text descendants.
     /// Chromium clips those descendants to the viewport, so below the fold the cell is the only
     /// published node that can hold the text.
-    private static func isTextContainerRole(_ role: String) -> Bool {
+    static func isTextContainerRole(_ role: String) -> Bool {
         role.lowercased() == "axcell"
     }
 

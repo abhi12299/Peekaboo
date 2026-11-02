@@ -326,7 +326,7 @@ enum DetachedAXObservationWorker {
         self.process(
             window,
             request: TraversalRequest(
-                depth: 0,
+                depth: .root,
                 deadline: deadline,
                 budget: request.traversalBudget,
                 source: nil),
@@ -341,7 +341,7 @@ enum DetachedAXObservationWorker {
             self.process(
                 menuBar,
                 request: TraversalRequest(
-                    depth: 0,
+                    depth: .root,
                     deadline: deadline,
                     budget: request.traversalBudget,
                     source: "applicationMenuBar"),
@@ -551,7 +551,7 @@ enum DetachedAXObservationWorker {
             state.deadlineReached = true
             return
         }
-        guard request.depth < request.budget.maxDepth else {
+        guard request.depth.level < request.budget.maxDepth else {
             state.maxDepthReached = true
             return
         }
@@ -572,10 +572,10 @@ enum DetachedAXObservationWorker {
             state.incompleteAccessibilityRead = true
             // The unreadable container is never emitted or targetable. Its descendants still
             // receive independent complete role/frame descriptor checks before they can be returned.
-            self.processChildren(of: element, request: request, state: &state)
+            self.processChildren(of: element, parentRole: nil, request: request, state: &state)
             return
         case .traverseOnly:
-            self.processChildren(of: element, request: request, state: &state)
+            self.processChildren(of: element, parentRole: nil, request: request, state: &state)
             return
         case .emitAndTraverse:
             break
@@ -648,7 +648,8 @@ enum DetachedAXObservationWorker {
         state.elements.append(DetectedElement(
             id: elementID,
             type: elementType,
-            label: self.label(for: descriptor),
+            label: self.label(
+                for: descriptor, element: element, node: state.visited.count, deadline: request.deadline),
             value: descriptor.value,
             bounds: descriptor.frame,
             isEnabled: descriptor.isEnabled ?? false,
@@ -659,11 +660,12 @@ enum DetachedAXObservationWorker {
             state.focusedReferences[elementID] = element
         }
 
-        self.processChildren(of: element, request: request, state: &state)
+        self.processChildren(of: element, parentRole: descriptor.role, request: request, state: &state)
     }
 
     private static func processChildren(
         of element: AXUIElement,
+        parentRole: String?,
         request: TraversalRequest,
         state: inout TraversalState)
     {
@@ -678,7 +680,7 @@ enum DetachedAXObservationWorker {
             self.process(
                 child,
                 request: TraversalRequest(
-                    depth: request.depth + 1,
+                    depth: request.depth.child(ofRole: parentRole),
                     deadline: request.deadline,
                     budget: request.budget,
                     source: request.source),
@@ -981,22 +983,56 @@ extension DetachedAXObservationWorker {
         }
     }
 
-    private static func label(for descriptor: Descriptor) -> String? {
-        ElementLabelResolver.resolve(
-            info: ElementLabelInfo(
-                role: descriptor.role,
-                label: descriptor.label,
-                title: descriptor.title,
-                value: descriptor.value,
-                roleDescription: descriptor.roleDescription,
-                description: descriptor.description,
-                identifier: descriptor.identifier,
-                placeholder: descriptor.placeholder),
-            childTexts: [],
+    private static func label(
+        for descriptor: Descriptor,
+        element: AXUIElement,
+        node: Int,
+        deadline: ContinuousClock.Instant) -> String?
+    {
+        let info = ElementLabelInfo(
+            role: descriptor.role,
+            label: descriptor.label,
+            title: descriptor.title,
+            value: descriptor.value,
+            roleDescription: descriptor.roleDescription,
+            description: descriptor.description,
+            identifier: descriptor.identifier,
+            placeholder: descriptor.placeholder)
+        // Only cells borrow descendant text on this lane. Chromium clips a below-the-fold cell's
+        // static text to a zero-height frame, so that text is never published on its own.
+        let childTexts = ElementLabelResolver.isTextContainerRole(descriptor.role) &&
+            ElementLabelResolver.needsChildTexts(info: info)
+            ? ElementLabelResolver.childTexts(
+                of: element,
+                parentRole: descriptor.role,
+                children: { self.children(of: $0, node: node).elements },
+                textualNode: { child in
+                    guard ContinuousClock.now < deadline else { return nil }
+                    self.prepare(child, deadline: deadline)
+                    return self.textualNode(of: child, node: node)
+                })
+            : []
+        return ElementLabelResolver.resolve(
+            info: info,
+            childTexts: childTexts,
             identifierCleaner: {
                 $0.replacingOccurrences(of: "-button", with: "")
                     .replacingOccurrences(of: "-", with: " ")
             })
+    }
+
+    private static func textualNode(of element: AXUIElement, node: Int) -> AXTextualNode? {
+        guard let role = self.rawAttributeRead(kAXRoleAttribute, of: element, node: node).value as? String else {
+            return nil
+        }
+        guard ElementLabelResolver.childTextRoles.contains(role.lowercased()) else {
+            return AXTextualNode(role: role, text: nil)
+        }
+        let text = [kAXTitleAttribute, "AXLabel", kAXValueAttribute, kAXDescriptionAttribute]
+            .lazy
+            .compactMap { self.rawAttributeRead($0, of: element, node: node).value as? String }
+            .first { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        return AXTextualNode(role: role, text: text)
     }
 
     private static func isFileDialogTitle(_ title: String) -> Bool {
@@ -1104,7 +1140,7 @@ extension DetachedAXObservationWorker {
 }
 
 private struct TraversalRequest {
-    let depth: Int
+    let depth: AXTraversalDepth
     let deadline: ContinuousClock.Instant
     let budget: AXTraversalBudget
     let source: String?
