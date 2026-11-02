@@ -168,6 +168,7 @@ enum DetachedAXMutationReader {
 
         var focused: Bool?
         var value: ElementValueReadback?
+        var dateValue: Date?
         var legacyPresentation: String?
         var selected: Bool?
         var selectedTextRange: TextSelectionRange?
@@ -184,6 +185,9 @@ enum DetachedAXMutationReader {
                 if let readback = ElementValueReadback(nativeValue: nativeValue), readback.isFinite {
                     value = readback
                     legacyPresentation = NativeElementValuePresentation.describe(nativeValue)
+                }
+                if let nativeValue, CFGetTypeID(nativeValue) == CFDateGetTypeID() {
+                    dateValue = nativeValue as? Date
                 }
             }
         case .selectedTextRange:
@@ -228,6 +232,7 @@ enum DetachedAXMutationReader {
             identity: afterIdentity,
             focused: focused,
             value: readable ? value : nil,
+            dateValue: readable ? dateValue : nil,
             legacyPresentation: readable ? legacyPresentation : nil,
             selected: selected,
             selectedTextRange: readable ? selectedTextRange : nil)

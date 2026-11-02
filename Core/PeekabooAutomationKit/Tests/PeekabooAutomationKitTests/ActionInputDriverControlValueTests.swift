@@ -58,3 +58,35 @@ struct ActionInputDriverControlValueTests {
         #expect(element.setDates.isEmpty)
     }
 }
+
+struct AXMutationDateReadbackTests {
+    @Test
+    func `post-write reader returns a date picker's CFDate value`() {
+        let element = RetainedFocusElement(element: AXUIElementCreateApplication(4242))
+        let written = Date(timeIntervalSince1970: 1_805_000_000)
+        let observed = DetachedAXMutationReader.readSynchronously(
+            request: (
+                target: AXMutationObservationTarget(processIdentifier: 4242, processStartIdentity: 99),
+                attribute: .value,
+                deadline: .now.advanced(by: .seconds(1))),
+            processStartIdentity: { 99 },
+            readSnapshot: { _ in
+                ExactWindowFocusSnapshot(
+                    processIdentifier: 4242,
+                    windowID: 42,
+                    frame: CGRect(x: 150, y: 196, width: 140, height: 26),
+                    role: "AXDateTimeArea",
+                    subrole: nil,
+                    subroleIsReadable: true,
+                    identifier: nil,
+                    nativeElement: element)
+            },
+            readAttribute: { name, _ in
+                #expect(name == kAXValueAttribute)
+                return written as CFDate
+            })
+
+        #expect(observed?.dateValue == written)
+        #expect(observed?.value == nil)
+    }
+}
