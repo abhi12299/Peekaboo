@@ -489,6 +489,8 @@ public struct DialogTool: MCPTool {
         if let savedPath {
             let verifySuffix = savedVerified ? " (verified)" : ""
             message += ": \(clicked) → \(savedPath)\(verifySuffix)"
+        } else if let openedPath = result.details["opened_path"] {
+            message += ": opened \(openedPath)"
         } else {
             message += ": clicked \(clicked)"
         }
