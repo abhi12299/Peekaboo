@@ -13,18 +13,25 @@ public struct FileDialogDestination: Equatable, Sendable {
     public let filename: String?
 
     public static func resolve(path: String?, name: String?) throws -> FileDialogDestination {
-        var directoryPath = path
+        var directory = path.map(Self.folderURL)
         var filename = name
         if let name, name.contains("/") {
             let expanded = (name as NSString).expandingTildeInPath
-            directoryPath = (expanded as NSString).deletingLastPathComponent
+            let nameFolder = Self.folderURL(for: (expanded as NSString).deletingLastPathComponent)
+            if let directory, directory.path != nameFolder.path {
+                throw PeekabooError.invalidInput(
+                    "The file name '\(name)' names the folder \(nameFolder.path), but path names " +
+                        "\(directory.path). Pass the folder in path and a bare file name in name.")
+            }
+            directory = nameFolder
             filename = (expanded as NSString).lastPathComponent
         }
-        let directory = directoryPath.map { path in
-            URL(fileURLWithPath: (path as NSString).expandingTildeInPath, isDirectory: true)
-                .standardizedFileURL
-                .resolvingSymlinksInPath()
-        }
         return FileDialogDestination(directory: directory, filename: filename)
+    }
+
+    private static func folderURL(for path: String) -> URL {
+        URL(fileURLWithPath: (path as NSString).expandingTildeInPath, isDirectory: true)
+            .standardizedFileURL
+            .resolvingSymlinksInPath()
     }
 }

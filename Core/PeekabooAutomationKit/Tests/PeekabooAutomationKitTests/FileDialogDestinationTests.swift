@@ -12,6 +12,17 @@ struct FileDialogDestinationTests {
         #expect(destination.filename == "report.txt")
     }
 
+    @Test
+    func `a name whose folder disagrees with the path is refused`() throws {
+        let first = try Self.makeFolder()
+        let second = try Self.makeFolder()
+        #expect(throws: PeekabooError.self) {
+            try FileDialogDestination.resolve(path: first.path, name: second.path + "/report.txt")
+        }
+        let same = try FileDialogDestination.resolve(path: first.path, name: first.path + "/report.txt")
+        #expect(same.filename == "report.txt")
+    }
+
     private static func makeFolder() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("FileDialogDestinationTests-\(UUID().uuidString)", isDirectory: true)
