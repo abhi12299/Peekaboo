@@ -49,14 +49,6 @@ struct AXTreeCollector {
         }
     }
 
-    private static let textualRoles: Set<String> = [
-        "axstatictext",
-        "axtext",
-        "axbutton",
-        "axlink",
-        "axdescription",
-        "axunknown",
-    ]
     private static let textFieldRoles: Set<String> = [
         "axtextfield",
         "axtextarea",
@@ -67,13 +59,27 @@ struct AXTreeCollector {
     private let logger = Logger(subsystem: "boo.peekaboo.core", category: "AXTreeCollector")
     private let descriptorReader: @MainActor (Element) -> AXDescriptorReader.ReadResult
     private let childrenReader: @MainActor (Element) -> [Element]
+    private let textReader: @MainActor (Element) -> AXTextualNode?
 
     init(
         descriptorReader: @escaping @MainActor (Element) -> AXDescriptorReader.ReadResult = AXDescriptorReader.read,
-        childrenReader: @escaping @MainActor (Element) -> [Element] = { $0.children() ?? [] })
+        childrenReader: @escaping @MainActor (Element) -> [Element] = { $0.children() ?? [] },
+        textReader: @escaping @MainActor (Element) -> AXTextualNode? = AXTreeCollector.textualNode)
     {
         self.descriptorReader = descriptorReader
         self.childrenReader = childrenReader
+        self.textReader = textReader
+    }
+
+    /// Reads the text only for roles that may label a parent, to keep the AX round-trips per node low.
+    static func textualNode(of element: Element) -> AXTextualNode? {
+        guard let role = element.role() else { return nil }
+        guard ElementLabelResolver.childTextRoles.contains(role.lowercased()) else {
+            return AXTextualNode(role: role, text: nil)
+        }
+        return AXTextualNode(
+            role: role,
+            text: element.title() ?? element.label() ?? element.stringValue() ?? element.descriptionText())
     }
 
     func collect(window: Element, deadline: Date, budget: AXTraversalBudget? = nil) -> Result {
@@ -240,50 +246,16 @@ struct AXTreeCollector {
             placeholder: descriptor.placeholder)
 
         let childTexts = ElementLabelResolver.needsChildTexts(info: info)
-            ? self.textualDescendants(of: element)
+            ? ElementLabelResolver.childTexts(
+                of: element,
+                parentRole: descriptor.role,
+                children: self.childrenReader,
+                textualNode: self.textReader)
             : []
         return ElementLabelResolver.resolve(
             info: info,
             childTexts: childTexts,
             identifierCleaner: self.cleanedIdentifier)
-    }
-
-    private func textualDescendants(of element: Element, depth: Int = 0, limit: Int = 4) -> [String] {
-        guard depth < 3, limit > 0, !Task.isCancelled,
-              let children = element.children(), !children.isEmpty
-        else {
-            return []
-        }
-
-        var results: [String] = []
-        for child in children {
-            if let role = child.role()?.lowercased(),
-               Self.textualRoles.contains(role)
-            {
-                if let candidate = child.title() ?? child.label() ?? child.stringValue() ?? child.descriptionText() {
-                    let normalized = candidate.trimmingCharacters(in: .whitespacesAndNewlines)
-                    if !normalized.isEmpty {
-                        results.append(normalized)
-                        if results.count >= limit {
-                            break
-                        }
-                    }
-                }
-            }
-
-            if results.count >= limit {
-                break
-            }
-
-            let remaining = limit - results.count
-            let nested = self.textualDescendants(of: child, depth: depth + 1, limit: remaining)
-            results.append(contentsOf: nested)
-            if results.count >= limit {
-                break
-            }
-        }
-
-        return results
     }
 
     private func cleanedIdentifier(_ identifier: String) -> String {
