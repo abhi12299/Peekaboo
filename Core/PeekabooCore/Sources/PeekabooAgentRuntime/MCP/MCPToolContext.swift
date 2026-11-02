@@ -1033,8 +1033,9 @@ extension MCPToolContext {
 
     private func backgroundApplicationTargetAuthorization(
         toolName: String,
-        arguments: ToolArguments) async -> BackgroundTargetAuthorization
+        arguments requestedArguments: ToolArguments) async -> BackgroundTargetAuthorization
     {
+        let arguments = await self.launchArgumentsPinningSharedName(toolName: toolName, arguments: requestedArguments)
         guard let schema = Self.backgroundApplicationTargetSchema(toolName: toolName) else {
             return BackgroundTargetAuthorization(arguments: arguments, rejection: nil, targetPlan: nil)
         }
