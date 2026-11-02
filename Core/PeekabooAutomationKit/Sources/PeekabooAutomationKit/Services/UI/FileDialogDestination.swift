@@ -15,6 +15,11 @@ public struct FileDialogDestination: Equatable, Sendable {
     public static func resolve(path: String?, name: String?) throws -> FileDialogDestination {
         var directory = path.map(Self.folderURL)
         var filename = name
+        if name == nil, let path, Self.namesFile(path) {
+            let expanded = (path as NSString).expandingTildeInPath
+            directory = Self.folderURL(for: (expanded as NSString).deletingLastPathComponent)
+            filename = (expanded as NSString).lastPathComponent
+        }
         if let name, name.contains("/") {
             let expanded = (name as NSString).expandingTildeInPath
             let nameFolder = Self.folderURL(for: (expanded as NSString).deletingLastPathComponent)
@@ -27,6 +32,16 @@ public struct FileDialogDestination: Equatable, Sendable {
             filename = (expanded as NSString).lastPathComponent
         }
         return FileDialogDestination(directory: directory, filename: filename)
+    }
+
+    /// An existing folder is a folder; an existing file, or a missing path with an extension, names a file.
+    private static func namesFile(_ path: String) -> Bool {
+        let expanded = (path as NSString).expandingTildeInPath
+        var isDirectory: ObjCBool = false
+        if FileManager.default.fileExists(atPath: expanded, isDirectory: &isDirectory) {
+            return !isDirectory.boolValue
+        }
+        return !(expanded as NSString).pathExtension.isEmpty
     }
 
     private static func folderURL(for path: String) -> URL {

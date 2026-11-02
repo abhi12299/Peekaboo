@@ -23,6 +23,20 @@ struct FileDialogDestinationTests {
         #expect(same.filename == "report.txt")
     }
 
+    @Test
+    func `a path to a file with no name splits into folder and file name`() throws {
+        let folder = try Self.makeFolder()
+        let destination = try FileDialogDestination.resolve(path: folder.path + "/report.txt", name: nil)
+        #expect(destination.directory?.path == folder.resolvingSymlinksInPath().path)
+        #expect(destination.filename == "report.txt")
+
+        let existing = folder.appendingPathComponent("archive.v2", isDirectory: true)
+        try FileManager.default.createDirectory(at: existing, withIntermediateDirectories: true)
+        let folderOnly = try FileDialogDestination.resolve(path: existing.path, name: nil)
+        #expect(folderOnly.directory?.path == existing.resolvingSymlinksInPath().path)
+        #expect(folderOnly.filename == nil)
+    }
+
     private static func makeFolder() throws -> URL {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("FileDialogDestinationTests-\(UUID().uuidString)", isDirectory: true)
