@@ -21,6 +21,9 @@ final class FakeSavePanel: FileDialogPanelSurface {
     var name: String
     var mode: Mode
     private(set) var savedURL: URL?
+    /// An Open panel: no name field; the default button opens the selected file.
+    var isOpenPanel = false
+    private(set) var openedURL: URL?
     private(set) var isOpen = true
     private(set) var events: [String] = []
     private var selected: URL?
@@ -112,16 +115,29 @@ final class FakeSavePanel: FileDialogPanelSurface {
     }
 
     func filename() throws -> String? {
-        self.name
+        self.isOpenPanel ? nil : self.name
     }
 
     func setFilename(_ name: String) throws {
+        if self.isOpenPanel { throw FakePanelError.unsupported }
         self.events.append("name \(name)")
         self.name = self.lockedName ?? name
     }
 
     func pressDefaultButton() throws {
         self.events.append("press default")
+        if self.isOpenPanel {
+            if let selected = self.selected,
+               (try? selected.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true
+            {
+                self.directory = selected
+                self.selected = nil
+                return
+            }
+            self.openedURL = self.selected ?? self.directory
+            self.isOpen = false
+            return
+        }
         guard !self.name.isEmpty else { return }
         if let selected = self.selected, (try? selected.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
             if self.ignoresFolderOpen { return }

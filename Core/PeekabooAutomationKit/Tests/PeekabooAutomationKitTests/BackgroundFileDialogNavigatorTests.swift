@@ -193,4 +193,49 @@ struct BackgroundFileDialogNavigatorTests {
         #expect(report.savedPath == tree.url("x/rep/rep").appendingPathComponent("q3.txt").path)
         #expect(panel.savedURL?.path == report.savedPath)
     }
+
+    @Test
+    func `a folder-only save reports the path from the panel's own name`() async throws {
+        let tree = try TemporaryFolderTree(["run/decoy", "run/exports"])
+        defer { tree.remove() }
+        let panel = FakeSavePanel(directory: tree.url("run/decoy"), name: "report.txt")
+
+        let report = try await BackgroundFileDialogNavigator(panel: panel).run(
+            FileDialogDestination(directory: tree.url("run/exports"), filename: nil))
+
+        #expect(report.savedPath == tree.url("run/exports").appendingPathComponent("report.txt").path)
+        #expect(panel.savedURL?.path == report.savedPath)
+    }
+
+    @Test
+    func `a name-only save reports the path in the panel's current folder`() async throws {
+        let tree = try TemporaryFolderTree(["run/decoy"])
+        defer { tree.remove() }
+        let panel = FakeSavePanel(directory: tree.url("run/decoy"))
+
+        let report = try await BackgroundFileDialogNavigator(panel: panel).run(
+            FileDialogDestination(directory: nil, filename: "q3.txt"))
+
+        #expect(report.savedPath == tree.url("run/decoy").appendingPathComponent("q3.txt").path)
+        #expect(panel.savedURL?.path == report.savedPath)
+        #expect(!panel.events.contains { $0.hasPrefix("menu.choose") })
+    }
+
+    @Test
+    func `an Open panel goes to the folder, selects the file and opens it`() async throws {
+        let tree = try TemporaryFolderTree(["run/decoy", "run/docs"])
+        defer { tree.remove() }
+        let file = tree.url("run/docs").appendingPathComponent("notes.txt")
+        try Data("x".utf8).write(to: file)
+        let panel = FakeSavePanel(directory: tree.url("run/decoy"), mode: .list)
+        panel.isOpenPanel = true
+
+        let report = try await BackgroundFileDialogNavigator(panel: panel).run(
+            FileDialogDestination(directory: tree.url("run/docs"), filename: "notes.txt"))
+
+        #expect(panel.openedURL?.path == file.path)
+        #expect(report.openedPath == file.path)
+        #expect(report.savedPath == nil)
+        #expect(!panel.events.contains { $0.hasPrefix("name") })
+    }
 }

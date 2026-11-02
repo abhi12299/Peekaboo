@@ -95,6 +95,43 @@ struct DialogFileExecutionOwnerTests {
     }
 
     @Test
+    func `background open reports the opened file`() async throws {
+        let fixture = try FileExecutionOwnerFixture()
+        let tree = try TemporaryFolderTree(["run/decoy", "run/docs"])
+        defer { tree.remove() }
+        let file = tree.url("run/docs").appendingPathComponent("notes.txt")
+        try Data("x".utf8).write(to: file)
+        let panel = FakeSavePanel(directory: tree.url("run/decoy"))
+        panel.isOpenPanel = true
+        let request = try DialogFileExecutionRequest(
+            target: DialogTargetSelector(processIdentifier: 42, windowID: 700),
+            path: file.path,
+            background: true)
+
+        let result = try await fixture.service().executeBackgroundFileDialog(
+            request, resolution: fixture.resolution(), surface: panel)
+
+        #expect(result.details["opened_path"] == file.path)
+        #expect(result.details["saved_path"] == nil)
+        #expect(result.outcome?.state == .confirmedChange)
+    }
+
+    @Test
+    func `the saved file may carry an extension the panel hid in the name field`() async throws {
+        let tree = try TemporaryFolderTree(["out"])
+        defer { tree.remove() }
+        let startedAt = Date()
+        let written = tree.url("out").appendingPathComponent("report.rtf")
+        try Data("x".utf8).write(to: written)
+
+        let found = await DialogService.waitForSavedFile(
+            tree.url("out").appendingPathComponent("report").path,
+            notBefore: startedAt)
+
+        #expect(found == written.path)
+    }
+
+    @Test
     func `file execution refuses missing parent or selector evidence before dispatch`() throws {
         let fixture = try FileExecutionOwnerFixture()
         var missingParent = try fixture.resolution()

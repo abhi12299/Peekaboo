@@ -37,8 +37,17 @@ public protocol FileDialogPanelSurface: AnyObject {
 
 /// What a background file-dialog run did.
 public struct BackgroundFileDialogReport: Equatable, Sendable {
+    /// Save panels: where the file was saved (nil when the panel's folder could not be mapped to a path).
     public let savedPath: String?
+    /// Open panels: the file or folder the panel was confirmed with.
+    public let openedPath: String?
     public let steps: [String]
+
+    public init(savedPath: String?, openedPath: String? = nil, steps: [String]) {
+        self.savedPath = savedPath
+        self.openedPath = openedPath
+        self.steps = steps
+    }
 }
 
 /// Why a background file-dialog run stopped.
@@ -93,9 +102,11 @@ public struct BackgroundFileDialogNavigator {
 
     public func run(_ destination: FileDialogDestination) async throws -> BackgroundFileDialogReport {
         var steps: [String] = []
+        // An Open panel has no name field; its file is selected in the list instead.
+        let isSavePanel = try self.panel.filename() != nil
         // Plan before changing anything: a folder the panel can't reach is refused with the panel untouched.
         let plan = try destination.directory.map { try self.plan(to: $0) }
-        if let filename = destination.filename {
+        if isSavePanel, let filename = destination.filename {
             try self.panel.setFilename(filename)
             steps.append("name")
         }
@@ -103,15 +114,28 @@ public struct BackgroundFileDialogNavigator {
             try await self.navigate(plan, steps: &steps)
             try self.requireCurrentFolder(directory)
         }
-        if let filename = destination.filename {
-            let current = try self.panel.filename()
-            guard current == filename else {
-                throw self.failure(
-                    .nameNotTaken,
-                    "The panel's name field shows '\(current ?? "")' instead of '\(filename)'; nothing was saved.",
-                    changed: true)
+        // Report where the file goes even when the request left the folder or the name to the panel.
+        let folder = try destination.directory ?? self.currentDirectory()
+        var openedPath: String?
+        if isSavePanel {
+            if let filename = destination.filename {
+                let current = try self.panel.filename()
+                guard current == filename else {
+                    throw self.failure(
+                        .nameNotTaken,
+                        "The panel's name field shows '\(current ?? "")' instead of '\(filename)'; nothing was saved.",
+                        changed: true)
+                }
             }
+        } else if let filename = destination.filename {
+            let file = try self.folderOrThrow(folder, for: filename).appendingPathComponent(filename)
+            try await self.selectEntry(file)
+            steps.append("select:\(filename)")
+            openedPath = file.path
+        } else {
+            openedPath = folder?.path
         }
+        let savedName = isSavePanel ? try destination.filename ?? self.panel.filename() : nil
         try self.panel.pressDefaultButton()
         steps.append("default_button")
         try await self.waitUntil { try !self.panel.isPanelOpen() }
@@ -122,10 +146,37 @@ public struct BackgroundFileDialogNavigator {
                     "confirmation such as Replace. Inspect it with dialog list.",
                 changed: true)
         }
-        let savedPath = destination.directory.flatMap { directory in
-            destination.filename.map { directory.appendingPathComponent($0).path }
+        let savedPath = folder.flatMap { directory in
+            savedName.flatMap { $0.isEmpty ? nil : directory.appendingPathComponent($0).path }
         }
-        return BackgroundFileDialogReport(savedPath: savedPath, steps: steps)
+        return BackgroundFileDialogReport(savedPath: savedPath, openedPath: openedPath, steps: steps)
+    }
+
+    private func folderOrThrow(_ folder: URL?, for filename: String) throws -> URL {
+        guard let folder else {
+            throw self.failure(
+                .folderUnreachable,
+                "The Open panel's current folder could not be mapped to a path; pass path to choose \(filename).",
+                changed: false)
+        }
+        return folder
+    }
+
+    /// Selects one file-list entry, retrying while the list reloads; throws when the panel never confirms it.
+    private func selectEntry(_ url: URL) async throws {
+        var selected = false
+        try await self.waitUntil {
+            if let item = try self.panel.item(atPath: url.path) {
+                selected = try self.panel.select(item)
+            }
+            return selected
+        }
+        guard selected else {
+            throw self.failure(
+                .selectionNotConfirmed,
+                "The panel did not show or confirm the selection of \(url.path); the default button was not pressed.",
+                changed: true)
+        }
     }
 
     // MARK: - Navigation
@@ -234,6 +285,34 @@ public struct BackgroundFileDialogNavigator {
     }
 
     // MARK: - Helpers
+
+    /// The panel's current folder as a path, rebuilt from the Where menu's titles by matching display names one
+    /// level at a time from the volume root. Nil when a title matches no folder.
+    private func currentDirectory() throws -> URL? {
+        let titles = try self.panel.openLocationMenu()
+        try self.panel.cancelLocationMenu()
+        let fileManager = FileManager.default
+        var roots: [(index: Int, url: URL)] = []
+        if let index = titles.firstIndex(of: Self.displayName(URL(fileURLWithPath: "/"))) {
+            roots.append((index, URL(fileURLWithPath: "/")))
+        }
+        for (index, title) in titles.enumerated() {
+            let volume = URL(fileURLWithPath: "/Volumes").appendingPathComponent(title, isDirectory: true)
+            if fileManager.fileExists(atPath: volume.path) { roots.append((index, volume)) }
+        }
+        guard let root = roots.min(by: { $0.index < $1.index }) else { return nil }
+        var current = root.url
+        for title in titles[0..<root.index].reversed() {
+            let children = (try? fileManager.contentsOfDirectory(
+                at: current, includingPropertiesForKeys: [.isDirectoryKey])) ?? []
+            guard let child = children.first(where: { child in
+                (try? child.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true &&
+                    Self.displayName(child) == title
+            }) else { return nil }
+            current = URL(fileURLWithPath: child.path, isDirectory: true)
+        }
+        return current
+    }
 
     /// Whether the panel shows `folder`. The Where value is a display name; when the folder and its parent share
     /// it, the Where menu's full ancestry decides (one brief menu).

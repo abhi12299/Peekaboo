@@ -54,27 +54,39 @@ extension DialogService {
         if let filename = destination.filename {
             details["filename"] = filename
         }
-        if let savedPath = report.savedPath {
-            guard await Self.waitForSavedFile(savedPath, notBefore: startedAt) else {
+        if let openedPath = report.openedPath {
+            details["opened_path"] = openedPath
+        }
+        var verified = report.openedPath != nil
+        if let expectedPath = report.savedPath {
+            guard let savedPath = await Self.waitForSavedFile(expectedPath, notBefore: startedAt) else {
                 throw DesktopActionFailure.indeterminate(
                     delivery: Self.backgroundFileDialogDelivery,
                     evidence: .completionUnknown,
                     unitCount: .one,
-                    message: "The panel closed, but \(savedPath) did not appear.",
+                    message: "The panel closed, but \(expectedPath) did not appear.",
                     hint: "Check where the app saved the file before retrying.")
                     .attributed(to: target.actionTargetReceipt)
             }
             details["saved_path"] = savedPath
             details["saved_path_verified"] = "true"
+            verified = true
+        } else if report.openedPath == nil {
+            // The panel closed, but its folder could not be mapped to a path, so the save can't be checked on disk.
+            details["saved_path_verified"] = "false"
         }
+        let unitCount = DesktopActionOutcome.DispatchUnitCount(report.steps.count) ?? .one
 
         return DialogActionResult(
             success: true,
             action: .handleFileDialog,
             details: details,
-            outcome: .confirmedChange(
-                delivery: Self.backgroundFileDialogDelivery,
-                unitCount: DesktopActionOutcome.DispatchUnitCount(report.steps.count) ?? .one),
+            outcome: verified
+                ? .confirmedChange(delivery: Self.backgroundFileDialogDelivery, unitCount: unitCount)
+                : .dispatchedUnverified(
+                    delivery: Self.backgroundFileDialogDelivery,
+                    evidence: .deliveryAccepted,
+                    unitCount: unitCount),
             targetReceipt: target.actionTargetReceipt,
             targetWindowIdentity: target.identity,
             targetWindowBounds: target.bounds,
@@ -137,16 +149,27 @@ extension DialogService {
         return failure.attributed(to: target.actionTargetReceipt)
     }
 
-    private static func waitForSavedFile(_ path: String, notBefore startedAt: Date) async -> Bool {
+    /// Waits for the saved file and returns its path. Save panels may hide the extension in the name field, so a
+    /// file named `<name>.<extension>` written during the run also counts.
+    static func waitForSavedFile(_ path: String, notBefore startedAt: Date) async -> String? {
+        let directory = (path as NSString).deletingLastPathComponent
+        let name = (path as NSString).lastPathComponent
+        func isFresh(_ candidate: String) -> Bool {
+            guard let attributes = try? FileManager.default.attributesOfItem(atPath: candidate),
+                  let modified = attributes[.modificationDate] as? Date
+            else { return false }
+            return modified >= startedAt.addingTimeInterval(-2)
+        }
         for _ in 0..<60 {
-            if let attributes = try? FileManager.default.attributesOfItem(atPath: path),
-               let modified = attributes[.modificationDate] as? Date,
-               modified >= startedAt.addingTimeInterval(-2)
-            {
-                return true
-            }
+            if isFresh(path) { return path }
+            let entries = (try? FileManager.default.contentsOfDirectory(atPath: directory)) ?? []
+            let withExtension = entries
+                .filter { $0.hasPrefix(name + ".") && !($0.dropFirst(name.count + 1)).contains(".") }
+                .map { (directory as NSString).appendingPathComponent($0) }
+                .filter(isFresh)
+            if withExtension.count == 1 { return withExtension[0] }
             try? await Task.sleep(for: .milliseconds(50))
         }
-        return false
+        return nil
     }
 }
