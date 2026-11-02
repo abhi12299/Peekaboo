@@ -195,7 +195,8 @@ test('targeted dialog input is documented as background AXValue', () => {
   assert.match(dialog, /app\/PID\/window target default to background AXValue/);
   assert.match(dialog, /dialog input --text hunter2.*--app Safari$/m);
   assert.doesNotMatch(dialog, /dialog input --text hunter2.*--foreground/);
-  assert.match(dialog, /`dialog file`.*require foreground\s+consent/s);
+  assert.match(dialog, /`--foreground` `dialog file`.*require\s+foreground\s+consent/s);
+  assert.match(dialog, /Targeted `dialog file` without `--foreground`.*accessibility only and never activates the app/s);
 });
 
 test('focus and Space examples never imply an implicit foreground switch', () => {
