@@ -84,8 +84,36 @@ struct ElementDetectionServiceElectronAccessibilityTests {
         #expect(message.contains("window \(windowID)"))
         #expect(message.contains("Space 3 (ID 5)"))
         #expect(message.contains("AXManualAccessibility"))
-        #expect(message.contains("`space move-window`"))
+        // Measured: a never-rendered window moved to the current Space lands behind other windows and still
+        // builds no tree, so the move is not offered as a fix.
+        #expect(message.contains("Moving the window to the current Space does not help on its own"))
         #expect(message.contains("`app launch`"))
+        #expect(message.contains("show that Space"))
+        #expect(events.entries.isEmpty)
+    }
+
+    @Test
+    func `a fully covered Electron window that never built its web content fails instead of returning its title bar`()
+        async throws
+    {
+        let target = try Self.targetApplication()
+        let events = EventLog()
+        let fake = FakeElectronApp(webContentAfterEnableProbes: nil)
+        let service = Self.service(kind: .electron, fake: fake, events: events, placement: .visibleSpace,
+                                   fullyCovered: true)
+        let windowID = try Self.windowID(of: target)
+
+        let error = await #expect(throws: PeekabooError.self) {
+            _ = try await service.inspectElements(
+                snapshotId: nil,
+                windowContext: Self.context(for: target, windowID: windowID))
+        }
+
+        let message = error?.localizedDescription ?? ""
+        #expect(message.contains("window \(windowID)"))
+        #expect(message.contains("completely covered by other windows"))
+        #expect(message.contains("`app launch`"))
+        #expect(message.contains("uncover"))
         #expect(events.entries.isEmpty)
     }
 
@@ -107,7 +135,8 @@ struct ElementDetectionServiceElectronAccessibilityTests {
         kind: WindowRoutedApplicationKind,
         fake: FakeElectronApp,
         events: EventLog,
-        placement: WindowSpacePlacement = .visibleSpace) -> ElementDetectionService
+        placement: WindowSpacePlacement = .visibleSpace,
+        fullyCovered: Bool = false) -> ElementDetectionService
     {
         ElementDetectionService(
             snapshotManager: nil,
@@ -119,7 +148,8 @@ struct ElementDetectionServiceElectronAccessibilityTests {
             },
             applicationKindProvider: { _ in kind },
             electronAccessibilityActivator: fake.activator(),
-            windowPlacementProvider: { _ in placement })
+            windowPlacementProvider: { _ in placement },
+            windowFullyCoveredProvider: { _ in fullyCovered })
     }
 
     private static func targetApplication() throws -> NSRunningApplication {

@@ -60,6 +60,7 @@ public final class ElementDetectionService {
         DetachedAXObservationRequest) async throws -> DetachedAXObservationResult
     typealias ApplicationKindProvider = @MainActor (NSRunningApplication) -> WindowRoutedApplicationKind
     typealias WindowPlacementProvider = @MainActor (CGWindowID) -> WindowSpacePlacement
+    typealias WindowFullyCoveredProvider = @MainActor (CGWindowID) -> Bool
 
     private let logger = Logger(subsystem: "boo.peekaboo.core", category: "ElementDetectionService")
     private let snapshotManager: (any SnapshotManagerProtocol)?
@@ -70,6 +71,7 @@ public final class ElementDetectionService {
     private let applicationKindProvider: ApplicationKindProvider
     let electronAccessibilityActivator: ElectronAccessibilityActivator
     let windowPlacementProvider: WindowPlacementProvider
+    let windowFullyCoveredProvider: WindowFullyCoveredProvider
     private let webFocusFallback = WebFocusFallback()
     private let menuBarElementCollector = MenuBarElementCollector()
     private let axTreeCollector = AXTreeCollector()
@@ -100,7 +102,9 @@ public final class ElementDetectionService {
         detachedAXObservationRunner: @escaping DetachedAXObservationRunner,
         applicationKindProvider: @escaping ApplicationKindProvider = WindowRoutedApplicationClassifier.kind(of:),
         electronAccessibilityActivator: ElectronAccessibilityActivator = .shared,
-        windowPlacementProvider: @escaping WindowPlacementProvider = WindowSpacePlacement.live(windowID:))
+        windowPlacementProvider: @escaping WindowPlacementProvider = WindowSpacePlacement.live(windowID:),
+        windowFullyCoveredProvider: @escaping WindowFullyCoveredProvider =
+            CoveredWindowCapturePolicy.liveIsFullyCovered(windowID:))
     {
         self.snapshotManager = snapshotManager
         self.windowResolver =
@@ -110,6 +114,7 @@ public final class ElementDetectionService {
         self.applicationKindProvider = applicationKindProvider
         self.electronAccessibilityActivator = electronAccessibilityActivator
         self.windowPlacementProvider = windowPlacementProvider
+        self.windowFullyCoveredProvider = windowFullyCoveredProvider
     }
 
     /// Detect UI elements in a screenshot

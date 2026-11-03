@@ -49,35 +49,52 @@ extension ElementDetectionService {
             self.electronLogger.warning("Electron PID \(processIdentifier) exposes no web content yet")
             return
         }
+        let appName = targetApp.localizedName ?? "PID \(processIdentifier)"
         let placement = self.windowPlacementProvider(windowID)
-        guard placement.isOtherSpace else {
+        let hiddenBy: ElectronHiddenWindow
+        if placement.isOtherSpace {
+            hiddenBy = .otherSpace(placement)
+        } else if self.windowFullyCoveredProvider(windowID) {
+            hiddenBy = .coveringWindows
+        } else {
             self.electronLogger.warning(
                 "Electron window \(windowID) of PID \(processIdentifier) exposes no web content yet")
             return
         }
-        let appName = targetApp.localizedName ?? "PID \(processIdentifier)"
-        throw PeekabooError.operationError(message: Self.offSpaceElectronWithoutWebContentMessage(
-            appName: appName,
-            windowID: windowID,
-            placement: placement))
+        throw PeekabooError.operationError(
+            message: hiddenBy.message(appName: appName, windowID: windowID))
     }
+}
 
-    static func offSpaceElectronWithoutWebContentMessage(
-        appName: String,
-        windowID: CGWindowID,
-        placement: WindowSpacePlacement) -> String
-    {
-        let seconds = Double(ElectronAccessibilityActivator.webContentTimeout.components.seconds) +
-            Double(ElectronAccessibilityActivator.webContentTimeout.components.attoseconds) / 1e18
-        return "\(appName) window \(windowID) is on \(placement.spaceDescription), which no display shows, and has " +
-            "no web content there: Electron does not render a window on a hidden Space, so only its title bar " +
-            "can be read. Peekaboo set AXManualAccessibility and waited \(String(format: "%.1f", seconds)) s. " +
-            "Nothing was read. Ways out without switching the user's Space: move the window to the current " +
-            "Space with `space move-window` (`to_current: true`; it changes the user's window layout), or, if " +
-            "the user agrees, quit the app and start it with `app launch`, which keeps an Electron app's " +
-            "windows on other Spaces live. Otherwise ask the user to show that Space."
+/// Why an Electron window that never built its web content cannot be read: Electron does not render a
+/// window that no display shows, so its web content and accessibility tree never appear.
+enum ElectronHiddenWindow {
+    case otherSpace(WindowSpacePlacement)
+    case coveringWindows
+
+    func message(appName: String, windowID: CGWindowID) -> String {
+        let timeout = ElectronAccessibilityActivator.webContentTimeout.components
+        let seconds = Double(timeout.seconds) + Double(timeout.attoseconds) / 1e18
+        let tried = "Peekaboo set AXManualAccessibility and waited \(String(format: "%.1f", seconds)) s; " +
+            "nothing was read."
+        let relaunch = "if the user agrees, quit the app and start it with `app launch`, which keeps an Electron " +
+            "app's hidden windows rendering"
+        switch self {
+        case let .otherSpace(placement):
+            return "\(appName) window \(windowID) is on \(placement.spaceDescription), which no display shows, and " +
+                "has no web content there: Electron has not rendered it, so only its title bar can be read. " +
+                "\(tried) Moving the window to the current Space does not help on its own: it arrives behind " +
+                "other windows and still does not render. Ways out without switching the user's Space: " +
+                "\(relaunch); otherwise ask the user to show that Space."
+        case .coveringWindows:
+            return "\(appName) window \(windowID) is completely covered by other windows and has no web " +
+                "content: Electron has not rendered it, so only its title bar can be read. \(tried) Ways out: " +
+                "\(relaunch); otherwise ask the user to uncover the window."
+        }
     }
+}
 
+extension ElementDetectionService {
     private var electronLogger: Logger {
         Logger(subsystem: "boo.peekaboo.core", category: "ElectronAccessibility")
     }

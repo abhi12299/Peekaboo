@@ -22,7 +22,7 @@ final class ElectronAccessibilityActivator {
 
     /// How long after the set a window may take to expose its web content: Electron's 2 s debounce plus
     /// the time to build the first tree.
-    static let webContentTimeout: Duration = .milliseconds(3500)
+    nonisolated static let webContentTimeout: Duration = .milliseconds(3500)
     static let pollInterval: Duration = .milliseconds(150)
 
     /// What one process generation has been through: when the attribute was set and which windows were seen
