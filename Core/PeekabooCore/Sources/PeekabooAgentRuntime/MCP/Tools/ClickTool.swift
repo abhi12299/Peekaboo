@@ -625,6 +625,7 @@ public struct ClickTool: MCPTool, MCPWindowObservingTool {
         if let handBack = execution.foregroundHandBack {
             metaDict["front_hand_backs"] = .int(handBack.handBacks)
             metaDict["front_restored_pid"] = .int(Int(handBack.restoredProcessIdentifier))
+            metaDict["front_target_kept"] = .bool(handBack.targetKeptFront)
         }
 
         let summary = ToolEventSummary(
@@ -661,15 +662,21 @@ public struct ClickTool: MCPTool, MCPWindowObservingTool {
     }
 
     /// AppKit activates an app that shows a modal alert or sheet after one of its menus was opened through
-    /// accessibility; the click handed the front back, and the agent should know both happened.
+    /// accessibility; the click hands the front back, and the agent should know what happened, also when the
+    /// hand-back did not take.
     static func foregroundHandBackNote(_ report: ForegroundHandBackReport) -> String {
         func name(_ pid: pid_t) -> String {
             NSRunningApplication(processIdentifier: pid)?.localizedName ?? "PID \(pid)"
         }
+        let target = name(report.targetProcessIdentifier)
+        let restored = name(report.restoredProcessIdentifier)
+        let cause = "\(target) came to the front during the click (apps do this when the click opens a modal " +
+            "alert or sheet); "
+        if report.targetKeptFront {
+            return cause + "Peekaboo could not hand the front back to \(restored); \(target) is still in front."
+        }
         let times = report.handBacks == 1 ? "" : " \(report.handBacks) times"
-        return "\(name(report.targetProcessIdentifier)) came to the front during the click (apps do this when " +
-            "the click opens a modal alert or sheet); the front was handed back to " +
-            "\(name(report.restoredProcessIdentifier))\(times)."
+        return cause + "the front was handed back to \(restored)\(times)."
     }
 
     private func parseCoordinates(_ raw: String) throws -> CGPoint {
