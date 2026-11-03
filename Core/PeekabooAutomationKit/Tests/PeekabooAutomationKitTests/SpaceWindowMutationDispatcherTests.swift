@@ -18,54 +18,14 @@ struct SpaceWindowMutationDispatcherTests {
                     destinationExists: { _ in true },
                     validateIdentity: { _ in true },
                     spaceIDsForWindow: { [11] },
-                    removeWindows: { _ in mutations.withLock { $0.append("remove") } },
-                    addWindow: { _ in mutations.withLock { $0.append("add") } }))
+                    moveWindow: { _ in mutations.withLock { $0.append("move") } },
+                    awaitMemberships: { _ in [11] }))
         }
 
         await #expect(throws: CancellationError.self) {
             _ = try await task.value
         }
         #expect(mutations.withLock { $0.isEmpty })
-    }
-
-    @Test
-    func `cancellation after destination add preserves one unit and skips removal`() async throws {
-        let state = OSAllocatedUnfairLock(initialState: (
-            memberships: [CGSSpaceID(11)],
-            mutations: [String]()))
-        let task = Task {
-            try SpaceWindowMutationDispatcher.moveWindow(
-                windowID: 4040,
-                expectedIdentity: Self.identity(),
-                targetSpaceID: 22,
-                backend: .init(
-                    destinationExists: { _ in true },
-                    validateIdentity: { _ in true },
-                    spaceIDsForWindow: { state.withLock { $0.memberships } },
-                    removeWindows: { spaces in
-                        state.withLock {
-                            $0.mutations.append("remove")
-                            $0.memberships.removeAll { spaces.contains($0) }
-                        }
-                    },
-                    addWindow: { space in
-                        state.withLock {
-                            $0.mutations.append("add")
-                            $0.memberships.append(space)
-                        }
-                        withUnsafeCurrentTask { $0?.cancel() }
-                    }))
-        }
-
-        let failure = await #expect(throws: DesktopActionFailure.self) {
-            _ = try await task.value
-        }
-
-        #expect(state.withLock { $0.mutations } == ["add"])
-        #expect(state.withLock { $0.memberships } == [11, 22])
-        #expect(failure?.outcome.state == .indeterminate)
-        #expect(failure?.outcome.dispatchState.unitCount == .one)
-        #expect(failure?.targetReceipt == Self.targetReceipt)
     }
 
     @Test
@@ -114,8 +74,8 @@ struct SpaceWindowMutationDispatcherTests {
                         events.append("memberships")
                         return [11]
                     },
-                    removeWindows: { _ in events.append("remove") },
-                    addWindow: { _ in events.append("add") }))
+                    moveWindow: { _ in events.append("move") },
+                    awaitMemberships: { _ in events.append("await"); return [11] }))
             Issue.record("Expected the changed process generation to refuse before dispatch")
         } catch let failure as DesktopActionFailure {
             #expect(failure.outcome == .refused(reason: .targetUnavailable))
@@ -126,7 +86,7 @@ struct SpaceWindowMutationDispatcherTests {
     }
 
     @Test
-    func `destination is established and verified before prior memberships are removed`() throws {
+    func `move dispatches one atomic move and confirms the settled exact destination`() throws {
         let identity = Self.identity()
         var memberships: [CGSSpaceID] = [11]
         var events: [String] = []
@@ -148,34 +108,82 @@ struct SpaceWindowMutationDispatcherTests {
                     events.append("memberships:\(memberships)")
                     return memberships
                 },
-                removeWindows: { spaces in
-                    events.append("remove:\(spaces)")
-                    memberships.removeAll { spaces.contains($0) }
-                },
-                addWindow: { space in
-                    events.append("add:\(space)")
-                    memberships.append(space)
+                moveWindow: { space in events.append("move:\(space)") },
+                awaitMemberships: { isSettled in
+                    // macOS applies the move asynchronously: the first poll still shows the old Space.
+                    for snapshot: [CGSSpaceID] in [[11], [22]] {
+                        memberships = snapshot
+                        events.append("poll:\(snapshot)")
+                        if isSettled(snapshot) { break }
+                    }
+                    return memberships
                 }))
 
         #expect(events == [
             "destination:22",
             "memberships:[11]",
             "validate:4040",
-            "add:22",
-            "validate:4040",
-            "memberships:[11, 22]",
             "destination:22",
             "validate:4040",
-            "memberships:[11, 22]",
-            "destination:22",
-            "remove:[11]",
+            "move:22",
+            "poll:[11]",
+            "poll:[22]",
             "validate:4040",
-            "memberships:[22]",
         ])
         #expect(result.outcome == .confirmedChange(
             delivery: .init(mechanism: .nativeFramework, mode: .background),
-            unitCount: DesktopActionOutcome.DispatchUnitCount(2)))
+            unitCount: .one))
         #expect(result.targetIdentity?.exactWindow?.identity == identity)
+    }
+
+    @Test
+    func `move that macOS ignores fails as a suspected no-op that says the window stayed put`() throws {
+        var moves: [CGSSpaceID] = []
+
+        do {
+            _ = try SpaceWindowMutationDispatcher.moveWindow(
+                windowID: 4040,
+                expectedIdentity: Self.identity(),
+                targetSpaceID: 22,
+                backend: .init(
+                    destinationExists: { _ in true },
+                    validateIdentity: { _ in true },
+                    spaceIDsForWindow: { [11] },
+                    moveWindow: { moves.append($0) },
+                    awaitMemberships: { _ in [11] }))
+            Issue.record("Expected an ignored move to fail")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .suspectedNoop)
+            #expect(failure.outcome.dispatchState.unitCount == .one)
+            #expect(failure.message.contains("macOS did not move the window"))
+            #expect(failure.message.contains("still on Space ID 11"))
+            #expect(failure.targetReceipt == Self.targetReceipt)
+        }
+
+        #expect(moves == [22])
+    }
+
+    @Test
+    func `move that leaves the window on its old Space too reports partial`() throws {
+        do {
+            _ = try SpaceWindowMutationDispatcher.moveWindow(
+                windowID: 4040,
+                expectedIdentity: Self.identity(),
+                targetSpaceID: 22,
+                backend: .init(
+                    destinationExists: { _ in true },
+                    validateIdentity: { _ in true },
+                    spaceIDsForWindow: { [11] },
+                    moveWindow: { _ in },
+                    awaitMemberships: { _ in [11, 22] }))
+            Issue.record("Expected a split membership to be reported")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .partial)
+            #expect(failure.outcome.dispatchState.unitCount == .one)
+            #expect(failure.message.contains("Space ID 22"))
+            #expect(failure.message.contains("Space ID 11"))
+            #expect(failure.targetReceipt == Self.targetReceipt)
+        }
     }
 
     @Test
@@ -194,8 +202,8 @@ struct SpaceWindowMutationDispatcherTests {
                     },
                     validateIdentity: { _ in events.append("validate"); return true },
                     spaceIDsForWindow: { events.append("memberships"); return [11] },
-                    removeWindows: { _ in events.append("remove") },
-                    addWindow: { _ in events.append("add") }))
+                    moveWindow: { _ in events.append("move") },
+                    awaitMemberships: { _ in events.append("await"); return [11] }))
             Issue.record("Expected a stale destination Space to be refused")
         } catch let failure as DesktopActionFailure {
             #expect(failure.outcome == .refused(reason: .targetUnavailable))
@@ -203,152 +211,6 @@ struct SpaceWindowMutationDispatcherTests {
         }
 
         #expect(events == ["destination"])
-    }
-
-    @Test
-    func `unverified destination establishment never removes existing memberships`() throws {
-        var events: [String] = []
-
-        do {
-            _ = try SpaceWindowMutationDispatcher.moveWindow(
-                windowID: 4040,
-                expectedIdentity: Self.identity(),
-                targetSpaceID: 22,
-                backend: .init(
-                    destinationExists: { _ in true },
-                    validateIdentity: { _ in true },
-                    spaceIDsForWindow: {
-                        events.append("memberships")
-                        return [11]
-                    },
-                    removeWindows: { _ in events.append("remove") },
-                    addWindow: { _ in events.append("add") }))
-            Issue.record("Expected destination membership verification to fail closed")
-        } catch let failure as DesktopActionFailure {
-            #expect(failure.outcome.state == .suspectedNoop)
-            #expect(failure.outcome.dispatchState.unitCount == .one)
-            #expect(failure.targetReceipt == Self.targetReceipt)
-        }
-
-        #expect(events == ["memberships", "add", "memberships"])
-    }
-
-    @Test
-    func `destination disappearance after establishment preserves existing memberships`() throws {
-        var memberships: [CGSSpaceID] = [11]
-        var destinationChecks = 0
-        var removed = false
-
-        do {
-            _ = try SpaceWindowMutationDispatcher.moveWindow(
-                windowID: 4040,
-                expectedIdentity: Self.identity(),
-                targetSpaceID: 22,
-                backend: .init(
-                    destinationExists: { _ in
-                        destinationChecks += 1
-                        return destinationChecks == 1
-                    },
-                    validateIdentity: { _ in true },
-                    spaceIDsForWindow: { memberships },
-                    removeWindows: { _ in removed = true },
-                    addWindow: { memberships.append($0) }))
-            Issue.record("Expected destination disappearance to stop before removal")
-        } catch let failure as DesktopActionFailure {
-            #expect(failure.outcome.state == .indeterminate)
-            #expect(failure.outcome.dispatchState.unitCount == .one)
-            #expect(failure.targetReceipt == Self.targetReceipt)
-        }
-
-        #expect(!removed)
-        #expect(memberships == [11, 22])
-    }
-
-    @Test
-    func `destination membership disappearance at removal boundary skips destructive cleanup`() throws {
-        var membershipReads = 0
-        var removed = false
-
-        do {
-            _ = try SpaceWindowMutationDispatcher.moveWindow(
-                windowID: 4040,
-                expectedIdentity: Self.identity(),
-                targetSpaceID: 22,
-                backend: .init(
-                    destinationExists: { _ in true },
-                    validateIdentity: { _ in true },
-                    spaceIDsForWindow: {
-                        membershipReads += 1
-                        switch membershipReads {
-                        case 1: return [11]
-                        case 2: return [11, 22]
-                        default: return [11]
-                        }
-                    },
-                    removeWindows: { _ in removed = true },
-                    addWindow: { _ in }))
-            Issue.record("Expected destination membership loss to stop destructive cleanup")
-        } catch let failure as DesktopActionFailure {
-            #expect(failure.outcome.state == .indeterminate)
-            #expect(failure.outcome.dispatchState.unitCount == .one)
-            #expect(failure.targetReceipt == Self.targetReceipt)
-        }
-
-        #expect(membershipReads == 3)
-        #expect(!removed)
-    }
-
-    @Test
-    func `destination disappearance is detected even without prior memberships`() throws {
-        var memberships: [CGSSpaceID] = []
-        var destinationChecks = 0
-
-        do {
-            _ = try SpaceWindowMutationDispatcher.moveWindow(
-                windowID: 4040,
-                expectedIdentity: Self.identity(),
-                targetSpaceID: 22,
-                backend: .init(
-                    destinationExists: { _ in
-                        destinationChecks += 1
-                        return destinationChecks == 1
-                    },
-                    validateIdentity: { _ in true },
-                    spaceIDsForWindow: { memberships },
-                    removeWindows: { _ in Issue.record("No prior membership should be removed") },
-                    addWindow: { memberships.append($0) }))
-            Issue.record("Expected destination disappearance to invalidate the move")
-        } catch let failure as DesktopActionFailure {
-            #expect(failure.outcome.state == .indeterminate)
-            #expect(failure.outcome.dispatchState.unitCount == .one)
-            #expect(failure.targetReceipt == Self.targetReceipt)
-        }
-
-        #expect(destinationChecks == 2)
-        #expect(memberships == [22])
-    }
-
-    @Test
-    func `failed removal reports partial only while destination remains established`() throws {
-        var memberships: [CGSSpaceID] = [11]
-
-        do {
-            _ = try SpaceWindowMutationDispatcher.moveWindow(
-                windowID: 4040,
-                expectedIdentity: Self.identity(),
-                targetSpaceID: 22,
-                backend: .init(
-                    destinationExists: { _ in true },
-                    validateIdentity: { _ in true },
-                    spaceIDsForWindow: { memberships },
-                    removeWindows: { _ in },
-                    addWindow: { memberships.append($0) }))
-            Issue.record("Expected stale prior membership to be reported")
-        } catch let failure as DesktopActionFailure {
-            #expect(failure.outcome.state == .partial)
-            #expect(failure.outcome.dispatchState.unitCount == DesktopActionOutcome.DispatchUnitCount(2))
-            #expect(failure.targetReceipt == Self.targetReceipt)
-        }
     }
 
     @Test
@@ -362,8 +224,8 @@ struct SpaceWindowMutationDispatcherTests {
                 destinationExists: { $0 == 22 },
                 validateIdentity: { _ in true },
                 spaceIDsForWindow: { [22] },
-                removeWindows: { _ in mutations.append("remove") },
-                addWindow: { _ in mutations.append("add") }))
+                moveWindow: { _ in mutations.append("move") },
+                awaitMemberships: { _ in mutations.append("await"); return [22] }))
 
         #expect(result.outcome == .confirmedNoChange())
         #expect(mutations.isEmpty)
@@ -480,8 +342,8 @@ struct SpaceWindowMutationDispatcherTests {
                     destinationExists: { _ in events.append("destination"); return true },
                     validateIdentity: { _ in events.append("validate"); return true },
                     spaceIDsForWindow: { events.append("memberships"); return [] },
-                    removeWindows: { _ in events.append("remove") },
-                    addWindow: { _ in events.append("add") }))
+                    moveWindow: { _ in events.append("move") },
+                    awaitMemberships: { _ in events.append("await"); return [11] }))
         }
         #expect(events.isEmpty)
     }

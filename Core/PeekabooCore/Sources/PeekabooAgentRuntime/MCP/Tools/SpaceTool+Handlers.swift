@@ -209,23 +209,47 @@ extension SpaceTool {
         expectedIdentity: WindowMutationIdentity,
         startTime: Date) throws -> ToolResponse
     {
-        let actionResult = try Self.requireSuccessfulMoveResult(
-            service.moveWindowToCurrentSpaceResult(
+        // Pin "current" once, so the Space moved to and the Space reported are the same one.
+        let spacesBefore = service.getAllSpaces()
+        let pinnedSpaceID = spacesBefore.first(where: \.isActive)?.id
+        let moveResult = if let pinnedSpaceID {
+            try service.moveWindowToSpaceResult(
                 windowID: windowID,
-                expectedIdentity: expectedIdentity),
-            expectedIdentity: expectedIdentity)
+                expectedIdentity: expectedIdentity,
+                spaceID: pinnedSpaceID)
+        } else {
+            try service.moveWindowToCurrentSpaceResult(
+                windowID: windowID,
+                expectedIdentity: expectedIdentity)
+        }
+        let actionResult = try Self.requireSuccessfulMoveResult(moveResult, expectedIdentity: expectedIdentity)
+        let spacesAfter = service.getAllSpaces()
 
         let executionTime = Date().timeIntervalSince(startTime)
-        let message = self.successMessage(
-            "Moved window '\(windowInfo.title)' to current Space",
-            duration: executionTime)
-
-        let baseMeta: [String: Value] = [
+        var baseMeta: [String: Value] = [
             "window_title": .string(windowInfo.title),
             "window_id": .double(Double(windowID)),
             "moved_to_current": .bool(true),
             "execution_time": .double(executionTime),
         ]
+        let message: String
+        if let destinationID = pinnedSpaceID {
+            message = self.reportMessage(
+                SpaceMoveReport.text(
+                    windowTitle: windowInfo.title,
+                    destinationID: destinationID,
+                    outcomeState: actionResult.outcome?.state ?? .dispatchedUnverified,
+                    spacesBefore: spacesBefore,
+                    spacesAfter: spacesAfter),
+                duration: executionTime)
+            baseMeta.merge(
+                Self.placementMetadata(destinationID: destinationID, before: spacesBefore, after: spacesAfter),
+                uniquingKeysWith: { _, new in new })
+        } else {
+            message = self.successMessage(
+                "Moved window '\(windowInfo.title)' to current Space",
+                duration: executionTime)
+        }
         let summary = ToolEventSummary(
             windowTitle: windowInfo.title,
             actionDescription: "Space Move",
@@ -314,12 +338,18 @@ extension SpaceTool {
             actionResult = moveResult
         }
 
+        let spacesAfter = service.getAllSpaces()
         let executionTime = Date().timeIntervalSince(startTime)
-        let followText = request.follow ? " and switched to Space \(targetSpaceNumber)" : ""
-        let body = "Moved window '\(windowInfo.title)' to Space \(targetSpaceNumber)\(followText)"
-        let message = self.successMessage(body, duration: executionTime)
+        let message = self.reportMessage(
+            SpaceMoveReport.text(
+                windowTitle: windowInfo.title,
+                destinationID: targetSpace.id,
+                outcomeState: moveResult.outcome?.state ?? .dispatchedUnverified,
+                spacesBefore: spaces,
+                spacesAfter: spacesAfter),
+            duration: executionTime)
 
-        let baseMeta: [String: Value] = [
+        var baseMeta: [String: Value] = [
             "window_title": .string(windowInfo.title),
             "window_id": .double(Double(windowID)),
             "target_space_number": .double(Double(targetSpaceNumber)),
@@ -327,6 +357,9 @@ extension SpaceTool {
             "followed": .bool(request.follow),
             "execution_time": .double(executionTime),
         ]
+        baseMeta.merge(
+            Self.placementMetadata(destinationID: targetSpace.id, before: spaces, after: spacesAfter),
+            uniquingKeysWith: { _, new in new })
         let summary = ToolEventSummary(
             windowTitle: windowInfo.title,
             actionDescription: "Space Move",
@@ -477,5 +510,29 @@ extension SpaceTool {
 
     private func successMessage(_ body: String, duration: TimeInterval) -> String {
         "\(AgentDisplayTokens.Status.success) \(body) in \(self.formatDuration(duration))s"
+    }
+
+    private func reportMessage(_ report: String, duration: TimeInterval) -> String {
+        "\(AgentDisplayTokens.Status.success) \(report) (\(self.formatDuration(duration))s)"
+    }
+
+    /// Where the window was moved and whether the user's own Space changed, from the inventories read
+    /// immediately before and after the move.
+    private static func placementMetadata(
+        destinationID: UInt64,
+        before: [SpaceInfo],
+        after: [SpaceInfo]) -> [String: Value]
+    {
+        var metadata: [String: Value] = ["space_id": .double(Double(destinationID))]
+        // Number the landed Space as `space list` prints it now; Mission Control may reorder during the move.
+        if let index = after.firstIndex(where: { $0.id == destinationID })
+            ?? before.firstIndex(where: { $0.id == destinationID })
+        {
+            metadata["space_number"] = .double(Double(index + 1))
+        }
+        if let userBefore = before.first(where: \.isActive)?.id, let userAfter = after.first(where: \.isActive)?.id {
+            metadata["user_space_changed"] = .bool(userBefore != userAfter)
+        }
+        return metadata
     }
 }

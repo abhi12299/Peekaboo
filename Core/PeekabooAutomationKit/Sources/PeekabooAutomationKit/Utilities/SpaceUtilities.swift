@@ -150,7 +150,12 @@ public final class SpaceManagementService {
                 ownerPIDs: ownerPIDsArray))
         }
 
-        return spaces
+        // Number Spaces the way Mission Control shows them; CGSCopySpaces uses an order of its own.
+        let order = SpaceMissionControlOrder.order(
+            spaceIDs: spaces.map(\.id),
+            managedDisplaySpaces: CGSCopyManagedDisplaySpaces(connection) as NSArray)
+        let spacesByID = Dictionary(spaces.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return order.compactMap { spacesByID[$0] }
     }
 
     /// Get information about all Spaces organized by display
@@ -382,39 +387,23 @@ public final class SpaceManagementService {
 
     // MARK: - Window Movement
 
-    /// Move a window to a specific Space
+    /// Move a window to a specific Space, without verifying the result.
     public func moveWindowToSpace(windowID: CGWindowID, spaceID: CGSSpaceID) throws {
-        // Move a window to a specific Space
-        let windowArray = [windowID] as CFArray
-        let spaceArray = [spaceID] as CFArray
-
-        // First, get current Spaces for the window
-        let currentSpaces = self.getSpacesForWindow(windowID: windowID)
-
-        // Remove from current Spaces
-        if !currentSpaces.isEmpty {
-            let currentSpaceIDs = currentSpaces.map(\.id) as CFArray
-            CGSRemoveWindowsFromSpaces(self.connection, windowArray, currentSpaceIDs)
-        }
-
-        // Add to target Space
-        CGSAddWindowsToSpaces(self.connection, windowArray, spaceArray)
-
-        // Moved window to Space
+        SpaceWindowMover.move(windowID: windowID, to: spaceID, connection: self.connection)
     }
 
     /// Move one generation-pinned exact window to a specific Space.
     ///
-    /// The destination is established and verified before prior memberships are removed, then the
-    /// final exact membership is verified before this method reports a confirmed change.
+    /// The move is one window-server operation (see `SpaceWindowMover`). It neither switches the user's Space
+    /// nor activates the app. The window's final exact membership is read back before this method reports a
+    /// confirmed change.
     public func moveWindowToSpaceResult(
         windowID: CGWindowID,
         expectedIdentity: WindowMutationIdentity,
         spaceID: CGSSpaceID) throws -> UIAutomationActionResult<Void>
     {
         let connection = self.connection
-        let windowArray = [windowID] as CFArray
-        let targetSpaceArray = [spaceID] as CFArray
+        let readMemberships = { self.getSpacesForWindow(windowID: windowID).map(\.id) }
 
         return try SpaceWindowMutationDispatcher.moveWindow(
             windowID: windowID,
@@ -425,15 +414,30 @@ public final class SpaceManagementService {
                     self.getAllSpaces().contains { $0.id == destination }
                 },
                 validateIdentity: SystemIdentityResolver.validateWindowMutationIdentity,
-                spaceIDsForWindow: {
-                    self.getSpacesForWindow(windowID: windowID).map(\.id)
+                spaceIDsForWindow: readMemberships,
+                moveWindow: { destination in
+                    SpaceWindowMover.move(windowID: windowID, to: destination, connection: connection)
                 },
-                removeWindows: { sourceSpaceIDs in
-                    CGSRemoveWindowsFromSpaces(connection, windowArray, sourceSpaceIDs as CFArray)
-                },
-                addWindow: { _ in
-                    CGSAddWindowsToSpaces(connection, windowArray, targetSpaceArray)
+                awaitMemberships: { isSettled in
+                    Self.pollMemberships(read: readMemberships, until: isSettled)
                 }))
+    }
+
+    /// macOS applies a Space move asynchronously, usually within 50 ms and always within 300 ms when measured.
+    static let membershipSettleTimeout: Duration = .milliseconds(1500)
+    private static let membershipPollInterval: TimeInterval = 0.02
+
+    private static func pollMemberships(
+        read: () -> [CGSSpaceID],
+        until isSettled: ([CGSSpaceID]) -> Bool) -> [CGSSpaceID]
+    {
+        let deadline = ContinuousClock.now + self.membershipSettleTimeout
+        var memberships = read()
+        while !isSettled(memberships), ContinuousClock.now < deadline {
+            Thread.sleep(forTimeInterval: self.membershipPollInterval)
+            memberships = read()
+        }
+        return memberships
     }
 
     /// Move a window to the current Space

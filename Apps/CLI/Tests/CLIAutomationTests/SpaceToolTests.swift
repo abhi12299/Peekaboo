@@ -421,6 +421,48 @@ struct SpaceToolExecutionHostTests {
     }
 
     @Test
+    func `move to the current Space reports the verified Space and the user's unchanged Space`() async throws {
+        let testContext = self.makeTestContext()
+        let context = self.makeToolContext(
+            services: testContext.services,
+            executionHost: .local,
+            executionPolicy: .backgroundOnly
+        )
+        let stubSpaceService = SpaceToolStubSpaceService(spaces: [
+            SpaceInfo(id: 6, type: .user, isActive: false, displayID: nil, name: nil, ownerPIDs: []),
+            SpaceInfo(id: 5, type: .user, isActive: true, displayID: nil, name: nil, ownerPIDs: []),
+        ])
+        stubSpaceService.moveOutcome = .confirmedChange(
+            delivery: .init(mechanism: .nativeFramework, mode: .background),
+            unitCount: .one
+        )
+        let tool = SpaceTool(testingSpaceService: stubSpaceService, context: context)
+
+        let response = try await context.execute(tool: tool, arguments: self.makeArguments([
+            "action": .string("move-window"),
+            "window_id": .int(testContext.windowInfo.windowID),
+            "to_current": .bool(true),
+        ]))
+
+        #expect(response.isError == false)
+        // The destination is pinned to the Space read before dispatch, so the report names the Space moved to.
+        #expect(stubSpaceService.moveWindowCalls.map(\.spaceID) == [5])
+        #expect(stubSpaceService.moveToCurrentCalls.isEmpty)
+        guard case let .text(text, _, _) = try #require(response.content.first) else {
+            Issue.record("Expected a text result")
+            return
+        }
+        #expect(text.contains(
+            "Moved window 'Document' to Space 2 (ID 5), the user's current Space. Verified: the window is " +
+                "now only on that Space. The user's Space did not change (Space 2)."
+        ))
+        let metadata = try #require(response.meta?.objectValue)
+        #expect(metadata["space_id"] == .double(5))
+        #expect(metadata["space_number"] == .double(2))
+        #expect(metadata["user_space_changed"] == .bool(false))
+    }
+
+    @Test
     func `Space move rejects a contradictory foreground service receipt`() async throws {
         let testContext = self.makeTestContext()
         let context = self.makeToolContext(

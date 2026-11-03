@@ -346,8 +346,11 @@ struct SpaceCommandActionTests {
             from: Data(self.output(from: result).utf8)
         )
         #expect(response.success)
-        let moveCalls = await self.spaceState(context) { $0.moveToCurrentCalls }
+        // "Current" is pinned to the active Space in the inventory, then moved to like any other Space.
+        let moveCalls = await self.spaceState(context) { $0.moveWindowCalls.map(\.spaceID) }
+        let activeSpaceID = await self.spaceState(context) { $0.spaces.first(where: \.isActive)?.id }
         #expect(!moveCalls.isEmpty)
+        #expect(moveCalls.allSatisfy { $0 == activeSpaceID })
     }
 
     @Test
@@ -369,6 +372,44 @@ struct SpaceCommandActionTests {
         #expect(response.success)
         let moveCalls = await self.spaceState(context) { $0.moveWindowCalls }
         #expect(moveCalls.contains { $0.spaceID == 1 })
+    }
+
+    @Test
+    func `space move-window reports the verified Space it moved the window to`() async throws {
+        let context = await self.makeSpaceSelectionContext(titles: ["Notes"])
+        await MainActor.run {
+            context.spaceService.moveOutcome = .confirmedChange(
+                delivery: .init(mechanism: .nativeFramework, mode: .background),
+                unitCount: .one
+            )
+        }
+
+        let json = try await self.runSpaceCommand([
+            "space", "move-window", "--window-id", "301", "--to-current", "--json",
+        ], context: context)
+        #expect(json.exitStatus == 0)
+        // The destination is pinned to the Space read before dispatch, so the report names the Space moved to.
+        let pinned = await self.spaceState(context) { $0.moveWindowCalls.map(\.spaceID) }
+        #expect(pinned == [1])
+        let response = try JSONDecoder().decode(
+            WindowSpaceActionResponse.self,
+            from: Data(self.output(from: json).utf8)
+        )
+        #expect(response.data?.space_id == 1)
+        #expect(response.data?.space_number == 1)
+        #expect(response.data?.user_space_changed == false)
+        #expect(response.data?.report?.hasPrefix(
+            "Moved window 'Notes' to Space 1 (ID 1), the user's current Space. Verified:"
+        ) == true)
+
+        let text = try await self.runSpaceCommand([
+            "space", "move-window", "--window-id", "301", "--to", "2",
+        ], context: context)
+        #expect(text.exitStatus == 0)
+        #expect(self.output(from: text).contains(
+            "Moved window 'Notes' to Space 2 (ID 2). Verified: the window is now only on that Space. " +
+                "The user's Space did not change (Space 1)."
+        ))
     }
 
     @Test
@@ -542,7 +583,7 @@ struct SpaceCommandActionTests {
         ], context: context)
 
         #expect(result.exitStatus == 0)
-        let moveCalls = await self.spaceState(context) { $0.moveToCurrentCalls }
+        let moveCalls = await self.spaceState(context) { $0.moveWindowCalls.map(\.windowID) }
         #expect(moveCalls == [302])
     }
 
@@ -555,7 +596,7 @@ struct SpaceCommandActionTests {
         ], context: context)
 
         #expect(result.exitStatus == 0)
-        let moveCalls = await self.spaceState(context) { $0.moveToCurrentCalls }
+        let moveCalls = await self.spaceState(context) { $0.moveWindowCalls.map(\.windowID) }
         #expect(moveCalls == [302])
     }
 
@@ -685,5 +726,7 @@ private struct WindowSpaceActionData: Codable {
     let space_number: Int?
     let moved_to_current: Bool?
     let followed: Bool?
+    let user_space_changed: Bool?
+    let report: String?
 }
 #endif

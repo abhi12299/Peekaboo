@@ -92,6 +92,10 @@ func CGSAddWindowsToSpaces(_ cid: CGSConnectionID, _ windows: CFArray, _ spaces:
 @_silgen_name("CGSRemoveWindowsFromSpaces")
 func CGSRemoveWindowsFromSpaces(_ cid: CGSConnectionID, _ windows: CFArray, _ spaces: CFArray)
 
+/// Moves each window to the managed Space. Since macOS 14.5 it moves only the caller's own windows.
+@_silgen_name("CGSMoveWindowsToManagedSpace")
+func CGSMoveWindowsToManagedSpace(_ cid: CGSConnectionID, _ windows: CFArray, _ space: CGSSpaceID)
+
 /// Returns information about managed display spaces
 @_silgen_name("CGSCopyManagedDisplaySpaces")
 func CGSCopyManagedDisplaySpaces(_ cid: CGSConnectionID) -> CFArray
