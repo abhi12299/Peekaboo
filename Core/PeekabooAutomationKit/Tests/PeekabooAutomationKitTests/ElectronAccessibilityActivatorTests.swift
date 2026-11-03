@@ -292,6 +292,24 @@ struct ElectronWindowContentWalkTests {
     }
 
     @Test
+    func `a walk cut off by the depth limit is unknown`() {
+        var node = Node(role: .value("AXWebArea"))
+        for _ in 0..<13 {
+            node = Node(role: .value("AXGroup"), children: .value([node]))
+        }
+        #expect(Self.walk(node) == .unknown)
+    }
+
+    @Test
+    func `leaves at the depth limit still allow a complete answer`() {
+        var node = Node(role: .value("AXButton"))
+        for _ in 0..<12 {
+            node = Node(role: .value("AXGroup"), children: .value([node]))
+        }
+        #expect(Self.walk(node) == .native)
+    }
+
+    @Test
     func `a walk cut off by the node limit is unknown`() {
         let window = Node(role: .value("AXWindow"), children: .value([
             Node(role: .value("AXButton")), Node(role: .value("AXButton")), Node(role: .value("AXButton")),

@@ -28,7 +28,7 @@ enum ElectronWindowContentWalk {
     }
 
     /// Web content as soon as an `AXWebArea` is found. Otherwise an empty Chromium host or a native window only
-    /// when every node was read; a failed read, the node limit or the budget makes the answer `.unknown`.
+    /// when every node was read; a failed read, the node or depth limit or the budget makes the answer `.unknown`.
     static func content<Element>(
         of root: Element,
         maximumDepth: Int,
@@ -59,9 +59,12 @@ enum ElectronWindowContentWalk {
             case .failed: complete = false
             case .value(false), .absent: break
             }
-            guard depth < maximumDepth else { continue }
             switch children(element) {
-            case let .value(children): queue += children.map { ($0, depth + 1) }
+            case let .value(children) where depth < maximumDepth:
+                queue += children.map { ($0, depth + 1) }
+            case let .value(children):
+                // Descendants below the depth limit go unread, so nothing can be said about them.
+                if !children.isEmpty { complete = false }
             case .failed: complete = false
             case .absent: break
             }
