@@ -112,6 +112,20 @@ struct ElectronAccessibilityActivatorTests {
     }
 
     @Test
+    func `a window that becomes unreadable while waited for is not refused or cached`() async {
+        let fake = FakeElectronApp(webContentAfterEnableProbes: nil)
+        fake.unreadableAfterEnableProbes = 1
+        let activator = fake.activator()
+
+        let first = await activator.prepare(processIdentifier: 42, processStartIdentity: 7, windowID: 9)
+        let probesAfterFirst = fake.probes.count
+        _ = await activator.prepare(processIdentifier: 42, processStartIdentity: 7, windowID: 9)
+
+        #expect(first == .ready)
+        #expect(fake.probes.count > probesAfterFirst)
+    }
+
+    @Test
     func `a relaunched app with a reused PID is set again`() async {
         let fake = FakeElectronApp(webContentAfterEnableProbes: nil)
         let activator = fake.activator()
@@ -159,6 +173,8 @@ final class FakeElectronApp {
     var nativeWindowIDs: Set<CGWindowID?> = []
     /// Windows the probe cannot find or read in time.
     var unreadableWindowIDs: Set<CGWindowID?> = []
+    /// After this many probes since the enable call, every probe is unreadable.
+    var unreadableAfterEnableProbes: Int?
     /// Probes after the enable call that still see no web content; nil means it never appears.
     var webContentAfterEnableProbes: Int?
     var enableError: (any Error)?
@@ -193,9 +209,93 @@ final class FakeElectronApp {
             return self.hasWebContentBeforeEnable ? .webContent : .chromiumHostWithoutWebContent
         }
         self.probesSinceEnable += 1
+        if let unreadable = self.unreadableAfterEnableProbes, self.probesSinceEnable > unreadable { return .unknown }
         guard let threshold = self.webContentAfterEnableProbes, self.probesSinceEnable > threshold else {
             return .chromiumHostWithoutWebContent
         }
         return .webContent
+    }
+}
+
+/// The probe's tree walk over a scripted window: what a busy or truncated read must not be mistaken for.
+struct ElectronWindowContentWalkTests {
+    final class Node {
+        var role: ElectronWindowContentWalk.Read<String>
+        var chromeNodeID: ElectronWindowContentWalk.Read<Bool>
+        var children: ElectronWindowContentWalk.Read<[Node]>
+
+        init(
+            role: ElectronWindowContentWalk.Read<String>,
+            chromeNodeID: ElectronWindowContentWalk.Read<Bool> = .absent,
+            children: ElectronWindowContentWalk.Read<[Node]> = .value([]))
+        {
+            self.role = role
+            self.chromeNodeID = chromeNodeID
+            self.children = children
+        }
+    }
+
+    private static func walk(_ root: Node, maximumNodes: Int = 400) -> ElectronWindowContent {
+        ElectronWindowContentWalk.content(
+            of: root,
+            maximumDepth: 12,
+            maximumNodes: maximumNodes,
+            canContinue: { true },
+            role: { $0.role },
+            hostsChromium: { $0.chromeNodeID },
+            children: { $0.children })
+    }
+
+    private static func chromiumGroup(children: [Node] = []) -> Node {
+        Node(role: .value("AXGroup"), chromeNodeID: .value(true), children: .value(children))
+    }
+
+    @Test
+    func `a web area is web content`() {
+        let window = Node(role: .value("AXWindow"), children: .value([
+            Self.chromiumGroup(children: [Node(role: .value("AXWebArea"))]),
+        ]))
+        #expect(Self.walk(window) == .webContent)
+    }
+
+    @Test
+    func `Chromium host views without a web area are an empty host`() {
+        let window = Node(role: .value("AXWindow"), children: .value([
+            Self.chromiumGroup(children: [Self.chromiumGroup()]),
+            Node(role: .value("AXButton")),
+        ]))
+        #expect(Self.walk(window) == .chromiumHostWithoutWebContent)
+    }
+
+    @Test
+    func `a window with no Chromium nodes, read completely, is native`() {
+        let window = Node(role: .value("AXWindow"), children: .value([
+            Node(role: .value("AXStaticText")),
+            Node(role: .value("AXButton")),
+        ]))
+        #expect(Self.walk(window) == .native)
+    }
+
+    @Test
+    func `a children read that failed is unknown, not native`() {
+        let window = Node(role: .value("AXWindow"), children: .failed)
+        #expect(Self.walk(window) == .unknown)
+    }
+
+    @Test
+    func `a failed read below a Chromium host is unknown, not an empty host`() {
+        let window = Node(role: .value("AXWindow"), children: .value([
+            Self.chromiumGroup(),
+            Node(role: .failed),
+        ]))
+        #expect(Self.walk(window) == .unknown)
+    }
+
+    @Test
+    func `a walk cut off by the node limit is unknown`() {
+        let window = Node(role: .value("AXWindow"), children: .value([
+            Node(role: .value("AXButton")), Node(role: .value("AXButton")), Node(role: .value("AXButton")),
+        ]))
+        #expect(Self.walk(window, maximumNodes: 2) == .unknown)
     }
 }

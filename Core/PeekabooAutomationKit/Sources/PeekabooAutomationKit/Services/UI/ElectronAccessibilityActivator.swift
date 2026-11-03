@@ -105,15 +105,17 @@ final class ElectronAccessibilityActivator {
         let deadline = max(
             enabledAt.advanced(by: Self.webContentTimeout),
             firstSeen.advanced(by: Self.newWindowGrace))
+        var lastContent = ElectronWindowContent.chromiumHostWithoutWebContent
         while self.now() < deadline {
             await self.sleep(Self.pollInterval)
-            let content = self.windowContent(processIdentifier, windowID)
-            if content == .webContent || content == .native {
+            lastContent = self.windowContent(processIdentifier, windowID)
+            if lastContent == .webContent || lastContent == .native {
                 self.markReady(processIdentifier, processStartIdentity, windowID)
                 return .ready
             }
         }
-        return .noWebContent
+        // Refuse only on evidence: a window whose last read failed is read as it is, and checked again next time.
+        return lastContent == .unknown ? .ready : .noWebContent
     }
 
     private func sendRequestIfNeeded(_ processIdentifier: pid_t, _ processStartIdentity: UInt64?) {
