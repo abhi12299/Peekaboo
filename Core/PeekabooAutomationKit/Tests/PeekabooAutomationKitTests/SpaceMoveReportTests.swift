@@ -61,7 +61,29 @@ struct SpaceMoveReportTests {
             spacesBefore: Self.spaces,
             spacesAfter: after)
 
-        #expect(text == "Asked macOS to move window 'Remote Panel' to Space 2 (ID 7); the result was not " +
-            "verified. The user's Space changed from Space 3 to Space 2.")
+        #expect(text == "Asked macOS to move window 'Remote Panel' to Space 2 (ID 7), the user's current Space; " +
+            "the result was not verified. The user's Space changed from Space 3 (ID 5) to Space 2 (ID 7).")
+    }
+
+    @Test
+    func `landed Space is numbered from the inventory read after the move`() {
+        // Mission Control reordered by recent use during the move: ID 7 went from position 2 to position 1.
+        let after = [
+            Self.space(7, active: true),
+            Self.space(6, active: false),
+            Self.space(5, active: false),
+            Self.space(4, active: false),
+        ]
+
+        let text = SpaceMoveReport.text(
+            windowTitle: "Remote Panel",
+            destinationID: 7,
+            outcomeState: .confirmedChange,
+            spacesBefore: Self.spaces,
+            spacesAfter: after)
+
+        #expect(text == "Moved window 'Remote Panel' to Space 1 (ID 7), the user's current Space. " +
+            "Verified: the window is now only on that Space. " +
+            "The user's Space changed from Space 3 (ID 5) to Space 1 (ID 7).")
     }
 }

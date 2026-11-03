@@ -2,8 +2,8 @@ import PeekabooFoundation
 
 /// The one-line result of a `space move-window`, shared by the CLI and the MCP tool.
 ///
-/// It names the Space the window ended up on (number as `space list` prints it, and ID), says whether that was
-/// verified, and says whether the user's own Space changed between the two inventories.
+/// It names the Space the window ended up on (number as `space list` prints it after the move, and ID), says
+/// whether that was verified, and says whether the user's own Space changed between the two inventories.
 public enum SpaceMoveReport {
     public static func text(
         windowTitle: String,
@@ -14,8 +14,10 @@ public enum SpaceMoveReport {
     {
         let userSpaceBefore = spacesBefore.first(where: \.isActive)?.id
         let userSpaceAfter = spacesAfter.first(where: \.isActive)?.id
-        var destination = self.describe(destinationID, in: spacesBefore)
-        if destinationID == userSpaceBefore {
+        // Mission Control may reorder Spaces during the move, so number the landed Space from the later list.
+        let landed = spacesAfter.contains { $0.id == destinationID } ? spacesAfter : spacesBefore
+        var destination = self.describe(destinationID, in: landed)
+        if destinationID == (userSpaceAfter ?? userSpaceBefore) {
             destination += ", the user's current Space"
         }
 
@@ -29,10 +31,10 @@ public enum SpaceMoveReport {
         }
 
         if let before = userSpaceBefore, let after = userSpaceAfter {
-            let beforeName = self.name(before, in: spacesBefore)
             text += before == after
-                ? " The user's Space did not change (\(beforeName))."
-                : " The user's Space changed from \(beforeName) to \(self.name(after, in: spacesAfter))."
+                ? " The user's Space did not change (\(self.name(after, in: spacesAfter)))."
+                : " The user's Space changed from \(self.describe(before, in: spacesBefore)) to " +
+                "\(self.describe(after, in: spacesAfter))."
         }
         return text
     }
