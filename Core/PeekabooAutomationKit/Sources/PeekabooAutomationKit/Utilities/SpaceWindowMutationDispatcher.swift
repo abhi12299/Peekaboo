@@ -7,8 +7,11 @@ enum SpaceWindowMutationDispatcher {
         let destinationExists: (CGSSpaceID) -> Bool
         let validateIdentity: (WindowMutationIdentity) -> Bool
         let spaceIDsForWindow: () -> [CGSSpaceID]
-        let removeWindows: ([CGSSpaceID]) -> Void
-        let addWindow: (CGSSpaceID) -> Void
+        /// Moves the window to the Space in one window-server operation, which macOS may apply asynchronously.
+        let moveWindow: (CGSSpaceID) -> Void
+        /// Reads the window's memberships until `isSettled` accepts them or a bounded wait ends, and returns the
+        /// last read.
+        let awaitMemberships: (_ isSettled: ([CGSSpaceID]) -> Bool) -> [CGSSpaceID]
     }
 
     struct SwitchBackend {
@@ -44,7 +47,7 @@ enum SpaceWindowMutationDispatcher {
                 .attributed(to: targetReceipt)
         }
 
-        var memberships = self.uniqueSpaceIDs(backend.spaceIDsForWindow())
+        let memberships = self.uniqueSpaceIDs(backend.spaceIDsForWindow())
         guard backend.validateIdentity(expectedIdentity) else {
             throw DesktopActionFailure.preDispatchRefusal(
                 reason: .targetUnavailable,
@@ -53,127 +56,57 @@ enum SpaceWindowMutationDispatcher {
                 .attributed(to: targetReceipt)
         }
 
-        var dispatchedUnitCount = 0
-        if !memberships.contains(targetSpaceID) {
-            try self.checkCancellation(
-                operation: "Space move",
-                delivery: self.moveDelivery,
-                dispatchedUnitCount: dispatchedUnitCount,
-                targetReceipt: targetReceipt)
-            backend.addWindow(targetSpaceID)
-            dispatchedUnitCount += 1
-
-            guard backend.validateIdentity(expectedIdentity) else {
-                throw self.postDispatchIdentityFailure(
-                    operation: "Space move",
-                    unitCount: dispatchedUnitCount,
-                    targetReceipt: targetReceipt)
-            }
-
-            memberships = self.uniqueSpaceIDs(backend.spaceIDsForWindow())
-            guard memberships.contains(targetSpaceID) else {
-                throw DesktopActionFailure.suspectedNoop(
-                    delivery: self.moveDelivery,
-                    unitCount: self.dispatchUnitCount(dispatchedUnitCount),
-                    message: "Space move destination could not be established.",
-                    hint: "Refresh the Space inventory and exact window before retrying.")
-                    .attributed(to: targetReceipt)
-            }
-        }
-
-        guard backend.destinationExists(targetSpaceID) else {
-            throw self.failureBeforeDestructiveRemoval(
-                message: "Space move destination disappeared after it was established.",
-                dispatchedUnitCount: dispatchedUnitCount,
-                targetReceipt: targetReceipt)
-        }
-        guard backend.validateIdentity(expectedIdentity) else {
-            if dispatchedUnitCount == 0 {
-                throw DesktopActionFailure.preDispatchRefusal(
-                    reason: .targetUnavailable,
-                    message: "Space move target changed before dispatch.",
-                    hint: "Refresh the window inventory before retrying.")
-                    .attributed(to: targetReceipt)
-            }
-            throw self.postDispatchIdentityFailure(
-                operation: "Space move",
-                unitCount: dispatchedUnitCount,
-                targetReceipt: targetReceipt)
+        if memberships == [targetSpaceID] {
+            return UIAutomationActionResult(
+                payload: (),
+                outcome: .confirmedNoChange(),
+                targetIdentity: DesktopTargetIdentity(exactWindow: exactTarget.window))
         }
 
         try self.checkCancellation(
             operation: "Space move",
             delivery: self.moveDelivery,
-            dispatchedUnitCount: dispatchedUnitCount,
+            dispatchedUnitCount: 0,
             targetReceipt: targetReceipt)
-        let removalMemberships = self.uniqueSpaceIDs(backend.spaceIDsForWindow())
-        guard backend.destinationExists(targetSpaceID), removalMemberships.contains(targetSpaceID) else {
-            throw self.failureBeforeDestructiveRemoval(
-                message: "Space move destination disappeared immediately before prior memberships were removed.",
-                dispatchedUnitCount: dispatchedUnitCount,
-                targetReceipt: targetReceipt)
+        guard backend.destinationExists(targetSpaceID) else {
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "Space move destination disappeared at the dispatch boundary.",
+                hint: "Refresh the Space inventory before retrying.")
+                .attributed(to: targetReceipt)
         }
-        let sourceSpaceIDs = removalMemberships.filter { $0 != targetSpaceID }
-        if !sourceSpaceIDs.isEmpty {
-            try self.checkCancellation(
-                operation: "Space move",
-                delivery: self.moveDelivery,
-                dispatchedUnitCount: dispatchedUnitCount,
-                targetReceipt: targetReceipt)
-            backend.removeWindows(sourceSpaceIDs)
-            dispatchedUnitCount += 1
-        }
-
+        // Identity is the final fallible check before the window-server dispatch.
         guard backend.validateIdentity(expectedIdentity) else {
-            if dispatchedUnitCount == 0 {
-                throw DesktopActionFailure.preDispatchRefusal(
-                    reason: .targetUnavailable,
-                    message: "Space move target changed before completion was verified.",
-                    hint: "Refresh the window inventory before retrying.")
-                    .attributed(to: targetReceipt)
-            }
+            throw DesktopActionFailure.preDispatchRefusal(
+                reason: .targetUnavailable,
+                message: "Space move target changed at the dispatch boundary.",
+                hint: "Refresh the window inventory before retrying.")
+                .attributed(to: targetReceipt)
+        }
+        backend.moveWindow(targetSpaceID)
+
+        let finalMemberships = self.uniqueSpaceIDs(backend.awaitMemberships { spaceIDs in
+            self.uniqueSpaceIDs(spaceIDs) == [targetSpaceID]
+        })
+        guard backend.validateIdentity(expectedIdentity) else {
             throw self.postDispatchIdentityFailure(
                 operation: "Space move",
-                unitCount: dispatchedUnitCount,
+                unitCount: 1,
                 targetReceipt: targetReceipt)
         }
-
-        let finalMemberships = self.uniqueSpaceIDs(backend.spaceIDsForWindow())
         guard finalMemberships == [targetSpaceID] else {
-            if dispatchedUnitCount == 0 {
-                throw DesktopActionFailure.preDispatchRefusal(
-                    reason: .targetUnavailable,
-                    message: "Space membership changed before the exact move could be verified.",
-                    hint: "Refresh the Space inventory before retrying.")
-                    .attributed(to: targetReceipt)
-            }
-            if finalMemberships.contains(targetSpaceID) {
-                throw DesktopActionFailure.partial(
-                    delivery: self.moveDelivery,
-                    unitCount: self.dispatchUnitCount(dispatchedUnitCount),
-                    message: "The destination Space was established, but prior memberships remain.",
-                    hint: "Observe the exact window's Space memberships before retrying cleanup.")
-                    .attributed(to: targetReceipt)
-            }
             throw DesktopActionFailure.indeterminate(
                 delivery: self.moveDelivery,
                 evidence: .completionUnknown,
-                unitCount: self.dispatchUnitCount(dispatchedUnitCount),
+                unitCount: .one,
                 message: "Space move completion could not be verified.",
                 hint: "Observe the exact window's Space memberships before retrying.")
                 .attributed(to: targetReceipt)
         }
 
-        let outcome: DesktopActionOutcome = if dispatchedUnitCount == 0 {
-            .confirmedNoChange()
-        } else {
-            .confirmedChange(
-                delivery: self.moveDelivery,
-                unitCount: self.dispatchUnitCount(dispatchedUnitCount))
-        }
         return UIAutomationActionResult(
             payload: (),
-            outcome: outcome,
+            outcome: .confirmedChange(delivery: self.moveDelivery, unitCount: .one),
             targetIdentity: DesktopTargetIdentity(exactWindow: exactTarget.window))
     }
 
@@ -342,27 +275,6 @@ enum SpaceWindowMutationDispatcher {
             evidence: .completionUnknown,
             unitCount: self.dispatchUnitCount(unitCount),
             message: "\(operation) target changed after dispatch began.",
-            hint: "Observe the exact window and its Space memberships before retrying.")
-            .attributed(to: targetReceipt)
-    }
-
-    private static func failureBeforeDestructiveRemoval(
-        message: String,
-        dispatchedUnitCount: Int,
-        targetReceipt: DesktopActionTargetReceipt) -> DesktopActionFailure
-    {
-        if dispatchedUnitCount == 0 {
-            return DesktopActionFailure.preDispatchRefusal(
-                reason: .targetUnavailable,
-                message: message,
-                hint: "Refresh the Space inventory before retrying.")
-                .attributed(to: targetReceipt)
-        }
-        return DesktopActionFailure.indeterminate(
-            delivery: self.moveDelivery,
-            evidence: .completionUnknown,
-            unitCount: self.dispatchUnitCount(dispatchedUnitCount),
-            message: message,
             hint: "Observe the exact window and its Space memberships before retrying.")
             .attributed(to: targetReceipt)
     }
