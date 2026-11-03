@@ -21,6 +21,8 @@ struct WindowRoutedApplicationClassifier {
         let principalClass: String?
         let hasElectronAsarIntegrity: Bool
         let isCatalyst: Bool
+        /// The bundle ships `Contents/Frameworks/Electron Framework.framework`.
+        var hasElectronFramework = false
         var isHidden = false
         var isTerminated = false
         var executableURL: URL?
@@ -56,7 +58,7 @@ struct WindowRoutedApplicationClassifier {
             return .chromium
         }
         if self.metadata.principalClass?.lowercased().contains("atomapplication") == true ||
-            self.metadata.hasElectronAsarIntegrity
+            self.metadata.hasElectronAsarIntegrity || self.metadata.hasElectronFramework
         {
             return .electron
         }
@@ -94,6 +96,24 @@ struct WindowRoutedApplicationClassifier {
         Self(application: application).kind
     }
 
+    /// The kind of the application bundle at `bundleURL`, read from its Info.plist, for an app that may not
+    /// be running yet.
+    static func kind(bundleURL: URL) -> WindowRoutedApplicationKind {
+        let info = Bundle(url: bundleURL)?.infoDictionary ?? [:]
+        return Self(metadata: Metadata(
+            bundleIdentifier: info["CFBundleIdentifier"] as? String,
+            principalClass: info["NSPrincipalClass"] as? String,
+            hasElectronAsarIntegrity: info["ElectronAsarIntegrity"] != nil,
+            isCatalyst: info["UIApplicationSceneManifest"] != nil || info["UIDeviceFamily"] != nil,
+            hasElectronFramework: Self.shipsElectronFramework(bundleURL))).kind
+    }
+
+    private static func shipsElectronFramework(_ bundleURL: URL?) -> Bool {
+        guard let bundleURL else { return false }
+        let framework = bundleURL.appendingPathComponent("Contents/Frameworks/Electron Framework.framework")
+        return FileManager.default.fileExists(atPath: framework.path)
+    }
+
     static func pointerTransport(processIdentifier: pid_t) -> WindowRoutedPointerTransport {
         guard let application = NSRunningApplication(processIdentifier: processIdentifier) else {
             return .publicCGEvent
@@ -123,6 +143,7 @@ struct WindowRoutedApplicationClassifier {
             principalClass: info["NSPrincipalClass"] as? String,
             hasElectronAsarIntegrity: info["ElectronAsarIntegrity"] != nil,
             isCatalyst: info["UIApplicationSceneManifest"] != nil || info["UIDeviceFamily"] != nil,
+            hasElectronFramework: Self.shipsElectronFramework(application.bundleURL),
             isHidden: application.isHidden,
             isTerminated: application.isTerminated,
             executableURL: bundle?.executableURL))

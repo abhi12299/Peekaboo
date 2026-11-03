@@ -31,6 +31,27 @@ struct OffSpaceCaptureWarningTests {
             kind: .appKit, placement: .otherSpace(spaceID: 5, spaceNumber: 3)) == nil)
     }
 
+    /// Measured with an Electron 45 test app launched with `--disable-backgrounding-occluded-windows` (as
+    /// `app launch` now starts Electron apps): on a hidden Space the screenshot and the element list both showed
+    /// the current clock and the tab selected by a background element click.
+    @Test
+    func `an Electron app that keeps occluded windows rendering gets no off-Space warning`() {
+        #expect(OffSpaceCapturePolicy.warning(
+            kind: .electron,
+            placement: .otherSpace(spaceID: 5, spaceNumber: 3),
+            launchArguments: ["/Applications/Slack.app/Contents/MacOS/Slack", "--disable-backgrounding-occluded-windows"])
+            == nil)
+        #expect(OffSpaceCapturePolicy.warning(
+            kind: .electron,
+            placement: .otherSpace(spaceID: 5, spaceNumber: 3),
+            launchArguments: ["/Applications/Slack.app/Contents/MacOS/Slack"]) != nil)
+    }
+
+    @Test
+    func `a process's launch arguments are read from the kernel`() {
+        #expect(ProcessLaunchArguments.read(processIdentifier: getpid()) == CommandLine.arguments)
+    }
+
     @Test
     func `a window observation carries the off-Space warning`() async throws {
         let app = ServiceApplicationInfo(processIdentifier: 123, bundleIdentifier: "com.example.fixture", name: "Fixture")

@@ -35,10 +35,23 @@ extension ApplicationService {
         else {
             return nil
         }
-        let isRunning = self.runningApplicationsForURLProvider(applicationURL).contains { application in
+        return self.hasRunningInstance(applicationURL) ? nil : applicationURL
+    }
+
+    private func hasRunningInstance(_ applicationURL: URL) -> Bool {
+        self.runningApplicationsForURLProvider(applicationURL).contains { application in
             !application.isTerminated && Self.application(application, matches: applicationURL)
         }
-        return isRunning ? nil : applicationURL
+    }
+
+    /// Chromium switches for an Electron app that Peekaboo starts itself. Electron does not render a window on
+    /// a Space no display shows, so its web content and accessibility tree never appear there;
+    /// `--disable-backgrounding-occluded-windows` keeps such windows rendering and their tree current, and
+    /// `--force-renderer-accessibility` turns the tree on from the start instead of after Electron's 2 s
+    /// AXManualAccessibility debounce. Switches only apply to a new process, so a running app gets none.
+    static func backgroundLaunchArguments(forApplicationAt applicationURL: URL) -> [String] {
+        guard WindowRoutedApplicationClassifier.kind(bundleURL: applicationURL) == .electron else { return [] }
+        return ["--disable-backgrounding-occluded-windows", "--force-renderer-accessibility"]
     }
 
     /// The application URL that should receive the request's documents without activation, or nil when the
@@ -83,6 +96,9 @@ extension ApplicationService {
     {
         let config = NSWorkspace.OpenConfiguration()
         config.activates = false
+        if !self.hasRunningInstance(applicationURL) {
+            config.arguments = Self.backgroundLaunchArguments(forApplicationAt: applicationURL)
+        }
         if launch.disablesRunningApplicationSubstitution {
             config.allowsRunningApplicationSubstitution = false
         }

@@ -10,8 +10,19 @@ import Foundation
 /// on. Input still reaches the window. An AppKit window there captured fresh content, so it is not flagged.
 /// Covered windows on a visible Space are `CoveredWindowCapturePolicy`'s case (pb-chrome-web), not this one.
 enum OffSpaceCapturePolicy {
-    static func warning(kind: WindowRoutedApplicationKind, placement: WindowSpacePlacement) -> String? {
+    /// The Chromium switch that keeps a window rendering, and its accessibility tree current, while no display
+    /// shows it. `app launch` starts Electron apps with it.
+    static let keepsOccludedWindowsRenderingSwitch = "--disable-backgrounding-occluded-windows"
+
+    static func warning(
+        kind: WindowRoutedApplicationKind,
+        placement: WindowSpacePlacement,
+        launchArguments: [String]? = nil) -> String?
+    {
         guard kind == .chromium || kind == .electron, placement.isOtherSpace else { return nil }
+        // Measured with an Electron app started with the switch: on a hidden Space the screenshot and the
+        // element list both showed the current state.
+        if launchArguments?.dropFirst().contains(Self.keepsOccludedWindowsRenderingSwitch) == true { return nil }
         // Same "Screenshot may be stale: " prefix as CoveredWindowCapturePolicy, agreed with pb-chrome-web.
         return "Screenshot may be stale: this window is on \(placement.spaceDescription), which no display shows. " +
             "Chromium and Electron apps do not repaint or update a window there, so its accessibility elements " +
@@ -24,7 +35,10 @@ enum OffSpaceCapturePolicy {
         guard let application = NSRunningApplication(processIdentifier: processIdentifier) else { return nil }
         let kind = WindowRoutedApplicationClassifier.kind(of: application)
         guard kind == .chromium || kind == .electron else { return nil }
-        return self.warning(kind: kind, placement: WindowSpacePlacement.live(windowID: windowID))
+        return self.warning(
+            kind: kind,
+            placement: WindowSpacePlacement.live(windowID: windowID),
+            launchArguments: ProcessLaunchArguments.read(processIdentifier: processIdentifier))
     }
 }
 

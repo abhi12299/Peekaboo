@@ -50,11 +50,17 @@ public enum StaleCaptureWarnings {
         guard let application = NSRunningApplication(processIdentifier: processIdentifier) else { return nil }
         let kind = WindowRoutedApplicationClassifier.kind(of: application)
         guard kind == .chromium || kind == .electron else { return nil }
+        return self.warning(kind: kind, isFullyCovered: self.liveIsFullyCovered(windowID: windowID))
+    }
+
+    /// Whether an on-screen window lies entirely under normal-level, non-transparent windows above it.
+    @MainActor
+    static func liveIsFullyCovered(windowID: CGWindowID) -> Bool {
         guard let targetInfo = (CGWindowListCopyWindowInfo([.optionIncludingWindow], windowID)
             as? [[String: Any]])?.first,
             targetInfo[kCGWindowIsOnscreen as String] as? Bool == true,
             let target = self.bounds(of: targetInfo)
-        else { return nil }
+        else { return false }
         let above = (CGWindowListCopyWindowInfo([.optionOnScreenAboveWindow], windowID) as? [[String: Any]]) ?? []
         let covering = above.compactMap { info -> CGRect? in
             guard info[kCGWindowLayer as String] as? Int == 0,
@@ -62,9 +68,7 @@ public enum StaleCaptureWarnings {
             else { return nil }
             return self.bounds(of: info)
         }
-        return self.warning(
-            kind: kind,
-            isFullyCovered: self.isFullyCovered(target, by: covering, displays: self.activeDisplayBounds()))
+        return self.isFullyCovered(target, by: covering, displays: self.activeDisplayBounds())
     }
 
     private static func subtract(_ cover: CGRect, from rect: CGRect) -> [CGRect] {
