@@ -249,4 +249,8 @@ struct WindowSpaceActionResult: Codable {
     let space_number: Int?
     let moved_to_current: Bool?
     let followed: Bool?
+    /// Whether the user's own Space differed after the move; absent when the Space inventory was unreadable.
+    let user_space_changed: Bool?
+    /// Where the window ended up, whether that was verified, and whether the user's Space changed.
+    let report: String?
 }

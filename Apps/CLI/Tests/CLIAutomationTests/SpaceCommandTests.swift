@@ -372,6 +372,41 @@ struct SpaceCommandActionTests {
     }
 
     @Test
+    func `space move-window reports the verified Space it moved the window to`() async throws {
+        let context = await self.makeSpaceSelectionContext(titles: ["Notes"])
+        await MainActor.run {
+            context.spaceService.moveOutcome = .confirmedChange(
+                delivery: .init(mechanism: .nativeFramework, mode: .background),
+                unitCount: .one
+            )
+        }
+
+        let json = try await self.runSpaceCommand([
+            "space", "move-window", "--window-id", "301", "--to-current", "--json",
+        ], context: context)
+        #expect(json.exitStatus == 0)
+        let response = try JSONDecoder().decode(
+            WindowSpaceActionResponse.self,
+            from: Data(self.output(from: json).utf8)
+        )
+        #expect(response.data?.space_id == 1)
+        #expect(response.data?.space_number == 1)
+        #expect(response.data?.user_space_changed == false)
+        #expect(response.data?.report?.hasPrefix(
+            "Moved window 'Notes' to Space 1 (ID 1), the user's current Space. Verified:"
+        ) == true)
+
+        let text = try await self.runSpaceCommand([
+            "space", "move-window", "--window-id", "301", "--to", "2",
+        ], context: context)
+        #expect(text.exitStatus == 0)
+        #expect(self.output(from: text).contains(
+            "Moved window 'Notes' to Space 2 (ID 2). Verified: the window is now only on that Space. " +
+                "The user's Space did not change (Space 1)."
+        ))
+    }
+
+    @Test
     func `space move-window rejects a returned non-success move outcome`() async throws {
         let context = await self.makeSpaceContext()
         await MainActor.run {
@@ -685,5 +720,7 @@ private struct WindowSpaceActionData: Codable {
     let space_number: Int?
     let moved_to_current: Bool?
     let followed: Bool?
+    let user_space_changed: Bool?
+    let report: String?
 }
 #endif

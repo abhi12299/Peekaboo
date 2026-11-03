@@ -100,6 +100,7 @@ struct MoveWindowSubcommand: ActionOutputFormattable, ErrorHandlingCommand,
             let spaceService = SpaceCommandEnvironment.service
 
             if self.toCurrent {
+                let spacesBefore = await spaceService.getAllSpaces()
                 self.resolvedRuntime.beginInteractionMutation()
                 let actionResult = try await spaceService.moveWindowToCurrentSpaceResult(
                     windowID: windowID,
@@ -109,11 +110,19 @@ struct MoveWindowSubcommand: ActionOutputFormattable, ErrorHandlingCommand,
                     actionResult,
                     expectedWindow: expectedWindow
                 )
+                let placement = await Self.placement(
+                    destinationID: spacesBefore.first(where: \.isActive)?.id,
+                    windowTitle: windowInfo.title,
+                    outcome: outcome,
+                    spacesBefore: spacesBefore,
+                    spaceService: spaceService
+                )
                 self.outputMoveToCurrentSpace(
                     windowID: windowID,
                     windowInfo: windowInfo,
                     outcome: outcome,
-                    targetIdentity: targetIdentity
+                    targetIdentity: targetIdentity,
+                    placement: placement
                 )
                 return
             }
@@ -173,10 +182,17 @@ struct MoveWindowSubcommand: ActionOutputFormattable, ErrorHandlingCommand,
             } else {
                 outcome = moveOutcome
             }
+            let placement = await Self.placement(
+                destinationID: targetSpace.id,
+                windowTitle: windowInfo.title,
+                outcome: moveOutcome,
+                spacesBefore: spaces,
+                spaceService: spaceService
+            )
             AutomationEventLogger.log(
                 .space,
                 "move_window window_id=\(windowID) space=\(spaceNum) follow=\(self.follow ? 1 : 0) "
-                    + "title=\"\(windowInfo.title)\""
+                    + "title=\"\(windowInfo.title)\" result=\"\(placement.report ?? "-")\""
             )
 
             if self.jsonOutput {
@@ -188,7 +204,9 @@ struct MoveWindowSubcommand: ActionOutputFormattable, ErrorHandlingCommand,
                     space_id: targetSpace.id,
                     space_number: spaceNum,
                     moved_to_current: false,
-                    followed: self.follow
+                    followed: self.follow,
+                    user_space_changed: placement.userSpaceChanged,
+                    report: placement.report
                 )
                 outputSuccessCodable(
                     data: data,
@@ -201,11 +219,7 @@ struct MoveWindowSubcommand: ActionOutputFormattable, ErrorHandlingCommand,
                     for: outcome,
                     operation: "Space move-window"
                 ))
-                var message = "Moved window '\(windowInfo.title)' to Space \(spaceNum)"
-                if self.follow {
-                    message += " (and switched to it)"
-                }
-                print(message)
+                print(placement.report ?? "Moved window '\(windowInfo.title)' to Space \(spaceNum)")
             }
         } catch {
             handleError(error)
@@ -217,11 +231,13 @@ struct MoveWindowSubcommand: ActionOutputFormattable, ErrorHandlingCommand,
         windowID: CGWindowID,
         windowInfo: ServiceWindowInfo,
         outcome: DesktopActionOutcome,
-        targetIdentity: DesktopTargetIdentity
+        targetIdentity: DesktopTargetIdentity,
+        placement: Placement
     ) {
         AutomationEventLogger.log(
             .space,
-            "move_window window_id=\(windowID) mode=current title=\"\(windowInfo.title)\""
+            "move_window window_id=\(windowID) mode=current title=\"\(windowInfo.title)\" "
+                + "result=\"\(placement.report ?? "-")\""
         )
         if self.jsonOutput {
             let data = WindowSpaceActionResult(
@@ -229,10 +245,12 @@ struct MoveWindowSubcommand: ActionOutputFormattable, ErrorHandlingCommand,
                 success: true,
                 window_id: windowID,
                 window_title: windowInfo.title,
-                space_id: nil,
-                space_number: nil,
+                space_id: placement.spaceID,
+                space_number: placement.spaceNumber,
                 moved_to_current: true,
-                followed: nil
+                followed: nil,
+                user_space_changed: placement.userSpaceChanged,
+                report: placement.report
             )
             outputSuccessCodable(
                 data: data,
@@ -245,8 +263,41 @@ struct MoveWindowSubcommand: ActionOutputFormattable, ErrorHandlingCommand,
                 for: outcome,
                 operation: "Space move-window"
             ))
-            print("Moved window '\(windowInfo.title)' to current Space")
+            print(placement.report ?? "Moved window '\(windowInfo.title)' to current Space")
         }
+    }
+
+    /// Where the window ended up, from the Space inventories read immediately before and after the move.
+    struct Placement {
+        var spaceID: UInt64?
+        var spaceNumber: Int?
+        var userSpaceChanged: Bool?
+        var report: String?
+    }
+
+    private static func placement(
+        destinationID: UInt64?,
+        windowTitle: String,
+        outcome: DesktopActionOutcome,
+        spacesBefore: [SpaceInfo],
+        spaceService: any SpaceCommandSpaceService
+    ) async -> Placement {
+        guard let destinationID else { return Placement() }
+        let spacesAfter = await spaceService.getAllSpaces()
+        var placement = Placement(spaceID: destinationID)
+        placement.spaceNumber = spacesBefore.firstIndex { $0.id == destinationID }.map { $0 + 1 }
+        if let before = spacesBefore.first(where: \.isActive)?.id,
+           let after = spacesAfter.first(where: \.isActive)?.id {
+            placement.userSpaceChanged = before != after
+        }
+        placement.report = SpaceMoveReport.text(
+            windowTitle: windowTitle,
+            destinationID: destinationID,
+            outcomeState: outcome.state,
+            spacesBefore: spacesBefore,
+            spacesAfter: spacesAfter
+        )
+        return placement
     }
 
     private static func exactWindowTarget(
