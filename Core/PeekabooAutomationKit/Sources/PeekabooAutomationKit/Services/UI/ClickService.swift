@@ -116,6 +116,7 @@ public final class ClickService {
     private let tabSelectionVerifier: TabSelectionVerifier
     private let exactWindowPixelFocusExecutor: ExactWindowPixelFocusExecutor
     private let foregroundHandBack: ForegroundHandBack
+    private let exactWindowIsListed: @Sendable (CGWindowID) -> Bool
 
     /// How long after a background click its target app is watched for taking the front. AppKit's activation
     /// for a modal sheet lands inside the synchronous press; the short tail catches one that follows it.
@@ -150,7 +151,10 @@ public final class ClickService {
         exactWindowPixelFocusExecutor: @escaping ExactWindowPixelFocusExecutor = { point, exactWindow in
             try await BackgroundInputDriver.focus(at: point, exactWindow: exactWindow)
         },
-        foregroundHandBack: ForegroundHandBack = .live)
+        foregroundHandBack: ForegroundHandBack = .live,
+        exactWindowIsListed: @escaping @Sendable (CGWindowID) -> Bool = {
+            SystemIdentityResolver.windowIdentity($0) != nil
+        })
     {
         self.snapshotManager = snapshotManager ?? SnapshotManager()
         self.inputPolicy = inputPolicy
@@ -164,6 +168,7 @@ public final class ClickService {
         self.tabSelectionVerifier = tabSelectionVerifier
         self.exactWindowPixelFocusExecutor = exactWindowPixelFocusExecutor
         self.foregroundHandBack = foregroundHandBack
+        self.exactWindowIsListed = exactWindowIsListed
     }
 
     private static func verifyTabSelection(_ element: AutomationElement, valueBefore: Int?) async throws -> Bool {
@@ -1222,6 +1227,27 @@ extension ClickService {
         }
     }
 
+    /// An accessibility press is bound to its element, not to a point in the window, so when only the exact
+    /// window changed after it (closed, or resized by a sheet the press opened) that is the press's own effect.
+    /// A changed process generation still fails the click. Returns nil when the window is unchanged.
+    private func windowChangeAfterAccessibilityPress(
+        _ receipt: DesktopOperationPlan.CaptureReceipt,
+        validateProcessIdentity: Bool) -> TargetWindowChange?
+    {
+        let mismatch = DesktopOperationSnapshotReceiptValidator.currentIdentityMismatch(
+            receipt: receipt,
+            validateProcessIdentity: validateProcessIdentity,
+            validateExactWindow: true,
+            processStartIdentityProvider: self.processStartIdentityProvider,
+            exactWindowIdentityValidator: self.exactWindowIdentityValidator)
+        guard mismatch == .exactWindow,
+              let windowID = receipt.exactWindow.flatMap({ CGWindowID(exactly: $0.identity.windowID) })
+        else {
+            return nil
+        }
+        return self.exactWindowIsListed(windowID) ? .changed : .closed
+    }
+
     /// Never throws: a click that was delivered stays delivered whether or not the front could be handed back.
     private func handForegroundBack(
         from target: pid_t?,
@@ -1426,6 +1452,7 @@ extension ClickService {
         var strategy = self.inputPolicy.strategy(for: .click)
         var mutationReceipt: DesktopOperationPlan.CaptureReceipt?
         var syntheticDestination: SyntheticClickDestination?
+        var targetWindowChange: TargetWindowChange?
         do {
             let plan = try DesktopOperationPlan(
                 verb: .click,
@@ -1502,6 +1529,14 @@ extension ClickService {
                         guard let mutationReceipt else {
                             throw PeekabooError.operationError(message: "Click target was not prepared")
                         }
+                        if result.path == .action,
+                           let change = self.windowChangeAfterAccessibilityPress(
+                               mutationReceipt,
+                               validateProcessIdentity: validatesProcessIdentity)
+                        {
+                            targetWindowChange = change
+                            return
+                        }
                         try self.requireCurrentTarget(
                             mutationReceipt,
                             afterDispatch: true,
@@ -1537,6 +1572,7 @@ extension ClickService {
                     window: .zero)
                 throw error
             }
+            result.targetWindowChange = targetWindowChange
             result.foregroundHandBack = await self.handForegroundBack(
                 from: targetProcessIdentifier,
                 to: previousFrontmost,
