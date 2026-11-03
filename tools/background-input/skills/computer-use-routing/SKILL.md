@@ -1,13 +1,18 @@
 ---
 name: computer-use-routing
-description: Decide which tool set drives the computer. Use whenever a task needs browser or desktop control (clicking, typing, forms, uploads, screenshots, operating an app). Content inside a Chrome tab goes to the Claude in Chrome extension (mcp__claude-in-chrome__*); every other app (Finder, TextEdit, Slack, Teams, Electron apps, Chrome's own UI, chrome:// pages, native pickers, JS alert dialogs) goes to the Peekaboo MCP server.
+description: Decide which tool set drives the computer. Use whenever a task needs browser or desktop control (clicking, typing, forms, uploads, screenshots, operating an app). Every action in Google Chrome goes to the Claude in Chrome extension (mcp__claude-in-chrome__*), launching the matching Chrome profile if it isn't connected; every other app (Finder, TextEdit, Slack, Teams, Electron apps, native pickers) goes to the Peekaboo MCP server.
 ---
 
 # Computer-use routing
 
 ## Route
-- **Inside a Chrome tab** (pages, forms, DOM, console): Claude in Chrome. Load its tools with ToolSearch first. If they are not available in this session, say so; do not drive tabs with Peekaboo.
-- **Everything else** (native and Electron apps, Chrome's toolbar/menus, `chrome://` pages, other browsers, JS alert dialogs, file pickers): Peekaboo.
+- **Anything in Google Chrome** (opening and closing tabs, pages, forms, DOM, console): Claude in Chrome. Load its tools with ToolSearch first. Don't drive Chrome with Peekaboo, AppleScript or the shell.
+  - If the extension isn't connected (the tools are missing or `tabs_context_mcp` reports no browser), launch the Chrome profile that matches this session and wait a few seconds:
+    - `c` (default config, abhishek@saxecap.com): `open -na "Google Chrome" --args --profile-directory="Profile 4"` (profile "Saxecap").
+    - `cg` (`CLAUDE_CONFIG_DIR` ends in `.claude-gocomply`): `open -na "Google Chrome" --args --profile-directory="Profile 11"` (profile "c", abhi@gocomply.ai).
+    - Check with `echo $CLAUDE_CONFIG_DIR`. Then wait about 5 s and call `tabs_context_mcp` again. If it still isn't connected, say so; don't fall back to Peekaboo.
+  - Peekaboo only for what Chrome shows outside the page and the extension can't reach: native file pickers and system dialogs Chrome opens.
+- **Everything else** (native and Electron apps, other browsers, file pickers): Peekaboo.
 - Hand data between them through files (`~/Downloads`, `file_upload`), never the clipboard.
 
 ## Peekaboo (background fork)
@@ -21,8 +26,8 @@ It works in the background: the user keeps the cursor, keyboard and front app.
 - Actions that carry a `snapshot` append a fresh look at the window when delivery is unverified. Read it instead of calling `see`/`window list`/`dialog list` again. "Unverified" is not a failure: don't retry blindly.
 - "Window N is no longer open" means it closed; if a dialog or sheet is named, answer it with `dialog`. After `window close`, "No dialog or sheet is open" means done.
 - Hotkeys (Cmd+S, Cmd+W, Cmd+Q, …) work through `press`. Prefer `window close`/`app quit` when you need a confirmed result.
-- A refusal that shows captured vs now bounds: take a fresh `see`. Right after a Space switch, wait a few seconds before acting. Keyboard, `press` and element (accessibility) clicks work on windows on other Spaces; point clicks on an off-Space Chrome or Electron window are refused, so use element IDs there.
-- "Screenshot may be stale:" names why. A covered Chrome/Electron window: trust the element text from `see` over the pixels. A window on another Space: its elements may be stale too, so `see` can't confirm an action there; ask the user to show that Space when the current state matters.
+- A refusal that shows captured vs now bounds: take a fresh `see`. Right after a Space switch, wait a few seconds before acting. Keyboard, `press` and element (accessibility) clicks work on windows on other Spaces; point clicks on an off-Space Electron window are refused, so use element IDs there.
+- "Screenshot may be stale:" names why. A covered Electron window: trust the element text from `see` over the pixels. A window on another Space: its elements may be stale too, so `see` can't confirm an action there; ask the user to show that Space when the current state matters.
 - `set_value` sets date pickers, steppers and combo boxes directly; prefer it to clicking their arrows.
 - If a launched app's window is minimized, `window restore` before `see`.
 - Close windows and quit apps you opened.
