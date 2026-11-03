@@ -270,3 +270,30 @@ struct WindowRoutedApplicationClassifierTests {
         }
     }
 }
+
+@MainActor
+struct WindowRoutedApplicationBundleClassifierTests {
+    @Test
+    func `an app bundle that ships Electron Framework is Electron`() throws {
+        let bundle = try FakeApplicationBundle(info: [:], frameworks: ["Electron Framework.framework"])
+        defer { bundle.remove() }
+
+        #expect(WindowRoutedApplicationClassifier.kind(bundleURL: bundle.url) == .electron)
+    }
+
+    @Test
+    func `an app bundle with asar integrity is Electron`() throws {
+        let bundle = try FakeApplicationBundle(info: ["ElectronAsarIntegrity": ["Resources/app.asar": [:]]])
+        defer { bundle.remove() }
+
+        #expect(WindowRoutedApplicationClassifier.kind(bundleURL: bundle.url) == .electron)
+    }
+
+    @Test
+    func `a plain app bundle is AppKit`() throws {
+        let bundle = try FakeApplicationBundle(info: [:])
+        defer { bundle.remove() }
+
+        #expect(WindowRoutedApplicationClassifier.kind(bundleURL: bundle.url) == .appKit)
+    }
+}
