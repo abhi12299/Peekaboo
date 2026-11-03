@@ -107,6 +107,16 @@ enum SpaceWindowMutationDispatcher {
                         "Use the window where it is, or ask the user to move it.")
                     .attributed(to: targetReceipt)
             }
+            if finalMemberships.contains(targetSpaceID) {
+                let others = finalMemberships.filter { $0 != targetSpaceID }.map(String.init)
+                throw DesktopActionFailure.partial(
+                    delivery: self.moveDelivery,
+                    unitCount: .one,
+                    message: "The window is on Space ID \(targetSpaceID) but also still on Space ID " +
+                        "\(others.joined(separator: ", ")).",
+                    hint: "Observe the exact window's Space memberships before retrying.")
+                    .attributed(to: targetReceipt)
+            }
             throw DesktopActionFailure.indeterminate(
                 delivery: self.moveDelivery,
                 evidence: .completionUnknown,

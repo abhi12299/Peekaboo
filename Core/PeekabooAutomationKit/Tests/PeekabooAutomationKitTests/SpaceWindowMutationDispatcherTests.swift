@@ -164,6 +164,29 @@ struct SpaceWindowMutationDispatcherTests {
     }
 
     @Test
+    func `move that leaves the window on its old Space too reports partial`() throws {
+        do {
+            _ = try SpaceWindowMutationDispatcher.moveWindow(
+                windowID: 4040,
+                expectedIdentity: Self.identity(),
+                targetSpaceID: 22,
+                backend: .init(
+                    destinationExists: { _ in true },
+                    validateIdentity: { _ in true },
+                    spaceIDsForWindow: { [11] },
+                    moveWindow: { _ in },
+                    awaitMemberships: { _ in [11, 22] }))
+            Issue.record("Expected a split membership to be reported")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .partial)
+            #expect(failure.outcome.dispatchState.unitCount == .one)
+            #expect(failure.message.contains("Space ID 22"))
+            #expect(failure.message.contains("Space ID 11"))
+            #expect(failure.targetReceipt == Self.targetReceipt)
+        }
+    }
+
+    @Test
     func `invalid destination refuses before membership reads or CGS dispatch`() throws {
         var events: [String] = []
 
