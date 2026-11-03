@@ -19,6 +19,35 @@ struct ElectronAccessibilityActivatorTests {
         #expect(fake.elapsed > .zero)
         #expect(fake.elapsed < ElectronAccessibilityActivator.webContentTimeout)
     }
+
+    @Test
+    func `a window that already exposes web content is read without setting anything or waiting`() async {
+        let fake = FakeElectronApp()
+        fake.hasWebContentBeforeEnable = true
+        let activator = fake.activator()
+
+        let outcome = await activator.prepare(processIdentifier: 42, processStartIdentity: 7, windowID: 9)
+
+        #expect(outcome == .ready)
+        #expect(fake.enableCalls.isEmpty)
+        #expect(fake.elapsed == .zero)
+    }
+
+    @Test
+    func `later reads of the same process neither set the attribute again nor probe a ready window`() async {
+        let fake = FakeElectronApp(webContentAfterEnableProbes: 1)
+        let activator = fake.activator()
+
+        _ = await activator.prepare(processIdentifier: 42, processStartIdentity: 7, windowID: 9)
+        let probesAfterFirstRead = fake.probes.count
+        let elapsedAfterFirstRead = fake.elapsed
+        let second = await activator.prepare(processIdentifier: 42, processStartIdentity: 7, windowID: 9)
+
+        #expect(second == .ready)
+        #expect(fake.enableCalls == [42])
+        #expect(fake.probes.count == probesAfterFirstRead)
+        #expect(fake.elapsed == elapsedAfterFirstRead)
+    }
 }
 
 /// An Electron app whose window exposes web content only some probes after manual accessibility was set.

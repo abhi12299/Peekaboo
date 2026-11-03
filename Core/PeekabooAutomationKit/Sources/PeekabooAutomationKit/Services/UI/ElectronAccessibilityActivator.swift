@@ -25,6 +25,15 @@ final class ElectronAccessibilityActivator {
     static let webContentTimeout: Duration = .milliseconds(3500)
     static let pollInterval: Duration = .milliseconds(150)
 
+    /// What one process generation has been through: when the attribute was set and which windows were seen
+    /// exposing web content. Electron keeps the tree on for the life of the process.
+    private struct ProcessState {
+        let processStartIdentity: UInt64?
+        var enabledAt: ContinuousClock.Instant?
+        var readyWindowIDs: Set<CGWindowID?> = []
+    }
+
+    private var states: [pid_t: ProcessState] = [:]
     private let hasWebContent: WebContentProbe
     private let enable: Enabler
     private let sleep: @MainActor (Duration) async -> Void
@@ -47,17 +56,44 @@ final class ElectronAccessibilityActivator {
         processStartIdentity: UInt64?,
         windowID: CGWindowID?) async -> Outcome
     {
-        if self.hasWebContent(processIdentifier, windowID) {
+        if self.state(processIdentifier, processStartIdentity).readyWindowIDs.contains(windowID) {
             return .ready
         }
-        try? self.enable(processIdentifier)
-        let deadline = self.now().advanced(by: Self.webContentTimeout)
+        if self.hasWebContent(processIdentifier, windowID) {
+            self.markReady(processIdentifier, processStartIdentity, windowID)
+            return .ready
+        }
+        // Set once per process generation: every set restarts Electron's debounce. Recorded before waiting so
+        // a concurrent read of the same app does not set it again.
+        let enabledAt = self.state(processIdentifier, processStartIdentity).enabledAt ?? {
+            try? self.enable(processIdentifier)
+            let enabledAt = self.now()
+            self.states[processIdentifier]?.enabledAt = enabledAt
+            return enabledAt
+        }()
+        let deadline = enabledAt.advanced(by: Self.webContentTimeout)
         while self.now() < deadline {
             await self.sleep(Self.pollInterval)
             if self.hasWebContent(processIdentifier, windowID) {
+                self.markReady(processIdentifier, processStartIdentity, windowID)
                 return .ready
             }
         }
         return .noWebContent
+    }
+
+    /// The recorded state of this process generation; a new generation of the PID starts over.
+    private func state(_ processIdentifier: pid_t, _ processStartIdentity: UInt64?) -> ProcessState {
+        if let state = self.states[processIdentifier], state.processStartIdentity == processStartIdentity {
+            return state
+        }
+        let state = ProcessState(processStartIdentity: processStartIdentity)
+        self.states[processIdentifier] = state
+        return state
+    }
+
+    private func markReady(_ processIdentifier: pid_t, _ processStartIdentity: UInt64?, _ windowID: CGWindowID?) {
+        _ = self.state(processIdentifier, processStartIdentity)
+        self.states[processIdentifier]?.readyWindowIDs.insert(windowID)
     }
 }
