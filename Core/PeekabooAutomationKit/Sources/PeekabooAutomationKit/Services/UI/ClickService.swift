@@ -1252,6 +1252,18 @@ extension ClickService {
         return self.exactWindowIsListed(windowID) ? .changed : .closed
     }
 
+    /// A press refused before dispatch (unsupported, stale, permission) sent nothing, so there is nothing to undo.
+    private static func mayHaveDispatched(_ error: any Error) -> Bool {
+        switch error {
+        case let failure as DesktopActionFailure:
+            failure.outcome.dispatchState.mutationDispatched
+        case is InputDeliveryIndeterminateError:
+            true
+        default:
+            false
+        }
+    }
+
     /// Never throws: a click that was delivered stays delivered whether or not the front could be handed back.
     private func handForegroundBack(
         from target: pid_t?,
@@ -1461,8 +1473,9 @@ extension ClickService {
         var mutationReceipt: DesktopOperationPlan.CaptureReceipt?
         var syntheticDestination: SyntheticClickDestination?
         var targetWindowChange: TargetWindowChange?
-        // The app in front when the click is about to be sent (inside the lane, after preparation), and whether
-        // a dispatch was attempted at all. A background click hands the front back only to that app.
+        // The app in front right before the accessibility press (inside the lane, after preparation and the
+        // pre-press revalidation), and whether the press was attempted. Only the press is watched: AppKit's
+        // activation for a modal sheet follows an AX press, and the pointer route has its own preflights.
         var previousFrontmost: pid_t?
         var dispatchAttempted = false
         let markDispatchBoundary: @MainActor () -> Void = {
@@ -1538,7 +1551,8 @@ extension ClickService {
                     guard let syntheticDestination else {
                         throw PeekabooError.operationError(message: "Click destination was not prepared")
                     }
-                    markDispatchBoundary()
+                    // The executor falls back to synthesis only when the press dispatched nothing.
+                    dispatchAttempted = false
                     return try await self.performSyntheticClick(
                         target: target,
                         clickType: clickType,
@@ -1584,7 +1598,7 @@ extension ClickService {
                     try await self.desktopOperationExecutor.executeOwned(plan)
                 }
             } catch {
-                if dispatchAttempted {
+                if dispatchAttempted, Self.mayHaveDispatched(error) {
                     _ = await self.handForegroundBack(
                         from: targetProcessIdentifier,
                         to: previousFrontmost,
@@ -1593,7 +1607,7 @@ extension ClickService {
                 throw error
             }
             result.targetWindowChange = targetWindowChange
-            if dispatchAttempted {
+            if dispatchAttempted, result.path == .action {
                 result.foregroundHandBack = await self.handForegroundBack(
                     from: targetProcessIdentifier,
                     to: previousFrontmost,

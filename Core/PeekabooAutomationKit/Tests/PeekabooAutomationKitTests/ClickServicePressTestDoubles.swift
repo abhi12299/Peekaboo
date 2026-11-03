@@ -76,10 +76,13 @@ final class HandBackElementResolver: AutomationElementResolving {
 @MainActor
 final class HandBackActionInputDriver: ActionInputDriving {
     private let afterPress: () -> Void
+    /// Thrown after the pre-press revalidation, as AX does for an element without AXPress.
+    private let pressError: ActionInputError?
     private(set) var pressCount = 0
 
-    init(afterPress: @escaping () -> Void) {
+    init(afterPress: @escaping () -> Void, pressError: ActionInputError? = nil) {
         self.afterPress = afterPress
+        self.pressError = pressError
     }
 
     func tryClick(
@@ -90,6 +93,9 @@ final class HandBackActionInputDriver: ActionInputDriving {
         try beforeMutation()
         self.pressCount += 1
         self.afterPress()
+        if let pressError {
+            throw pressError
+        }
         return AutomationTestFixtures.uiActionReceipt(
             actionName: AXActionNames.kAXPressAction,
             anchorPoint: CGPoint(x: 70, y: 50),
@@ -147,6 +153,8 @@ struct PressClickHarness {
     let front: FakeFrontProcess
     let action: HandBackActionInputDriver
     var resolver = HandBackElementResolver()
+    var strategy: UIInputStrategy = .actionOnly
+    var synthetic: any SyntheticInputDriving = ClickRecordingSyntheticInputDriver()
     /// Whether window 42 still matches its capture-time receipt; read before and after the press.
     var windowMatchesReceipt: @Sendable () -> Bool = { true }
     /// Whether window 42 is still listed at all.
@@ -194,8 +202,9 @@ struct PressClickHarness {
         let listed = self.windowIsListed
         return try await ClickService(
             snapshotManager: InMemorySnapshotManager.containing(detection),
-            inputPolicy: UIInputPolicy(defaultStrategy: .actionOnly),
+            inputPolicy: UIInputPolicy(defaultStrategy: self.strategy),
             actionInputDriver: self.action,
+            syntheticInputDriver: self.synthetic,
             automationElementResolver: self.resolver,
             exactWindowIdentityValidator: { _, _ in matches() },
             processStartIdentityProvider: { _ in 1 },

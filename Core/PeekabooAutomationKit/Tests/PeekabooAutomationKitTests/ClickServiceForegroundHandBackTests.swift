@@ -73,4 +73,41 @@ struct ClickServiceForegroundHandBackTests {
         #expect(report.targetKeptFront)
         #expect(report.targetProcessIdentifier == target)
     }
+
+    @Test
+    @MainActor
+    func `an accessibility press that was not dispatched never hands back`() async throws {
+        let front = FakeFrontProcess(Self.userFrontProcess)
+        let target = getpid()
+        // The user brings the target to the front while the press is refused as unsupported.
+        let harness = PressClickHarness(
+            front: front,
+            action: HandBackActionInputDriver(
+                afterPress: { front.processIdentifier = target },
+                pressError: .unsupported(.actionUnsupported)))
+
+        await #expect(throws: (any Error).self) { _ = try await harness.click() }
+
+        #expect(front.activatedProcessIdentifiers.isEmpty)
+    }
+
+    @Test
+    @MainActor
+    func `a pointer fallback after an unsupported press does not hand back`() async throws {
+        let front = FakeFrontProcess(Self.userFrontProcess)
+        let target = getpid()
+        let synthetic = ClickRecordingSyntheticInputDriver()
+        var harness = PressClickHarness(
+            front: front,
+            action: HandBackActionInputDriver(
+                afterPress: { front.processIdentifier = target },
+                pressError: .unsupported(.actionUnsupported)))
+        harness.strategy = .actionFirst
+        harness.synthetic = synthetic
+
+        let result = try? await harness.click()
+
+        #expect(result?.foregroundHandBack == nil)
+        #expect(front.activatedProcessIdentifiers.isEmpty)
+    }
 }
