@@ -49,7 +49,10 @@ struct SpaceCommandSelectedHostTests {
         #expect(response.target_identity?.processIdentifier == 777)
         #expect(response.target_identity?.processStartIdentityDecimal == "70")
         #expect(response.target_identity?.windowID == 99)
-        #expect(spaceService.moveToCurrentCalls == [99])
+        // `--to-current` pins the active Space once and moves the window there by ID.
+        #expect(spaceService.moveWindowCalls.map(\.windowID) == [99])
+        #expect(spaceService.moveWindowCalls.map(\.spaceID) == [41])
+        #expect(spaceService.moveToCurrentCalls.isEmpty)
     }
 
     @Test(arguments: [true, false])
@@ -97,6 +100,7 @@ struct SpaceCommandSelectedHostTests {
             windowID: 99
         ))
         #expect(spaceService.identityValidationCount == 1)
+        #expect(spaceService.moveWindowCalls.isEmpty)
         #expect(spaceService.moveToCurrentCalls.isEmpty)
     }
 
@@ -136,6 +140,7 @@ struct SpaceCommandSelectedHostTests {
             #expect(response.error?.mutation_dispatched == false)
         }
         #expect(spaceService.identityValidationCount == 0)
+        #expect(spaceService.moveWindowCalls.isEmpty)
         #expect(spaceService.moveToCurrentCalls.isEmpty)
     }
 
