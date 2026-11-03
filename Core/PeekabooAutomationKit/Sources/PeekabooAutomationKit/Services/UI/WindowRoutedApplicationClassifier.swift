@@ -94,6 +94,17 @@ struct WindowRoutedApplicationClassifier {
         Self(application: application).kind
     }
 
+    /// The kind of the application bundle at `bundleURL`, read from its Info.plist, for an app that may not
+    /// be running yet.
+    static func kind(bundleURL: URL) -> WindowRoutedApplicationKind {
+        let info = Bundle(url: bundleURL)?.infoDictionary ?? [:]
+        return Self(metadata: Metadata(
+            bundleIdentifier: info["CFBundleIdentifier"] as? String,
+            principalClass: info["NSPrincipalClass"] as? String,
+            hasElectronAsarIntegrity: info["ElectronAsarIntegrity"] != nil,
+            isCatalyst: info["UIApplicationSceneManifest"] != nil || info["UIDeviceFamily"] != nil)).kind
+    }
+
     static func pointerTransport(processIdentifier: pid_t) -> WindowRoutedPointerTransport {
         guard let application = NSRunningApplication(processIdentifier: processIdentifier) else {
             return .publicCGEvent

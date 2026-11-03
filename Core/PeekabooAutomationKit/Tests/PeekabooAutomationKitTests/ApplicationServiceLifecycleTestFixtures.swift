@@ -27,6 +27,7 @@ final class ApplicationOpenRecorder {
         let activates: Bool
         let allowsRunningApplicationSubstitution: Bool
         let createsNewApplicationInstance: Bool
+        let arguments: [String]
     }
 
     private(set) var calls: [Call] = []
@@ -47,7 +48,8 @@ final class ApplicationOpenRecorder {
             openURLs: openURLs,
             activates: configuration.activates,
             allowsRunningApplicationSubstitution: configuration.allowsRunningApplicationSubstitution,
-            createsNewApplicationInstance: configuration.createsNewApplicationInstance))
+            createsNewApplicationInstance: configuration.createsNewApplicationInstance,
+            arguments: configuration.arguments))
         return self.runningApplication
     }
 }
