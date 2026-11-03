@@ -1298,7 +1298,21 @@ extension PeekabooBridgeServer {
         fallbackTarget: PeekabooBridgeHandledResponse.Mutation.TargetDisposition?) throws
         -> PeekabooBridgeHandledResponse
     {
-        try self.handledActionResponse(
+        // The Bridge response does not carry `targetWindowChange`; a remote client would read the click as an
+        // ordinary success and offer its snapshot for reuse. Report it as indeterminate instead, as before the
+        // window change was reported locally, until the field crosses the Bridge.
+        if let change = result.targetWindowChange, let outcome = result.outcome,
+           outcome.dispatchState.mutationDispatched
+        {
+            throw DesktopActionFailure.indeterminate(
+                route: outcome.route,
+                delivery: outcome.delivery,
+                evidence: .completionUnknown,
+                unitCount: outcome.dispatchState.unitCount,
+                message: "Click was dispatched, and its window then \(change.rawValue)",
+                hint: "Observe the target before taking another action.")
+        }
+        return try self.handledActionResponse(
             response: response,
             outcome: result.outcome,
             targetIdentity: result.targetIdentity,

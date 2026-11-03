@@ -474,6 +474,10 @@ public struct UIAutomationActionResult<Payload: Sendable>: Sendable {
     public let outcome: DesktopActionOutcome?
     public let targetIdentity: DesktopTargetIdentity?
     public let selectedLeafEvidence: [DesktopSelectedLeafEvidence]?
+    /// Set when the target app took the front during a background action and the front was handed back.
+    public private(set) var foregroundHandBack: ForegroundHandBackReport?
+    /// Set when the exact target window closed or changed after an accessibility press.
+    public private(set) var targetWindowChange: TargetWindowChange?
 
     public init(payload: Payload, outcome: DesktopActionOutcome?) {
         self.init(payload: payload, outcome: outcome, targetIdentity: nil)
@@ -513,6 +517,18 @@ public struct UIAutomationActionResult<Payload: Sendable>: Sendable {
 
     public var desktopActionResult: DesktopActionResult<Payload> {
         DesktopActionResult(payload: self.payload, outcome: self.outcome)
+    }
+
+    public func withForegroundHandBack(_ report: ForegroundHandBackReport?) -> Self {
+        var copy = self
+        copy.foregroundHandBack = report
+        return copy
+    }
+
+    public func withTargetWindowChange(_ change: TargetWindowChange?) -> Self {
+        var copy = self
+        copy.targetWindowChange = change
+        return copy
     }
 }
 

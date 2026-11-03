@@ -352,6 +352,14 @@ extension MCPToolContext {
         tool: any MCPTool,
         arguments: ToolArguments) async throws -> ToolResponse
     {
+        if let clickArguments = MCPActionPressRedirect.clickArguments(toolName: tool.name, arguments: arguments),
+           self.executionAuthority.rejection(toolName: tool.name, arguments: arguments) != nil
+        {
+            let response = try await self.executeWithoutObservation(
+                tool: ClickTool(context: self),
+                arguments: clickArguments)
+            return MCPActionPressRedirect.annotate(response)
+        }
         let effect = MCPToolSnapshotMutationPolicy.effect(toolName: tool.name, arguments: arguments)
         let mutationLane = self.mutationLane(for: tool.name, arguments: arguments)
         let mutationExecutionGate = mutationLane.gate

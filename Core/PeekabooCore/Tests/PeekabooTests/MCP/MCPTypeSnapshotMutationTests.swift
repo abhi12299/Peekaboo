@@ -38,6 +38,27 @@ struct MCPTypeSnapshotMutationTests {
     }
 
     @Test
+    func `typing refused before dispatch leaves the snapshot usable`() async throws {
+        let fixture = try await Self.makeFixture()
+        fixture.automation.reportsNoFocusedElement = true
+
+        let response = try await fixture.context.execute(
+            tool: TypeTool(context: fixture.context),
+            arguments: Self.arguments(fixture))
+
+        #expect(response.isError)
+        guard case let .text(text, _, _)? = response.content.first else {
+            Issue.record("Expected a text response")
+            return
+        }
+        #expect(text.contains("reports no focused element"))
+        #expect(fixture.automation.typeCalls == 0)
+        #expect(fixture.snapshots.finishCalls.map(\.requiresFreshObservation) == [false])
+        let reusable = try await fixture.storage.beginSnapshotMutation(snapshotId: fixture.snapshotID)
+        try await fixture.storage.finishSnapshotMutation(reusable, requiresFreshObservation: false)
+    }
+
+    @Test
     func `confirmed ordinary typing finalizes its lease before returning success`() async throws {
         let fixture = try await Self.makeFixture()
         let response = try await TypeTool(context: fixture.context).execute(

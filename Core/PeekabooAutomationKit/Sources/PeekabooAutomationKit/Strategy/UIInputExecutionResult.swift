@@ -43,6 +43,10 @@ public struct UIInputExecutionResult: Codable, Equatable, Sendable {
     public var actionName: String?
     public var anchorPoint: CGPoint?
     public var duration: TimeInterval
+    /// Set when the target app took the front during a background operation and the front was handed back.
+    public var foregroundHandBack: ForegroundHandBackReport?
+    /// Set when the exact target window closed or changed after an accessibility press: the press's own effect.
+    public var targetWindowChange: TargetWindowChange?
 
     /// Preserves the shipped v4 source contract. Historical callers do not provide outcome
     /// evidence, so their result is conservatively indeterminate and retry-unsafe.
@@ -105,6 +109,8 @@ public struct UIInputExecutionResult: Codable, Equatable, Sendable {
         case actionName
         case anchorPoint
         case duration
+        case foregroundHandBack
+        case targetWindowChange
     }
 
     public init(from decoder: any Decoder) throws {
@@ -119,6 +125,10 @@ public struct UIInputExecutionResult: Codable, Equatable, Sendable {
         self.actionName = try container.decodeIfPresent(String.self, forKey: .actionName)
         self.anchorPoint = try container.decodeIfPresent(CGPoint.self, forKey: .anchorPoint)
         self.duration = try container.decode(TimeInterval.self, forKey: .duration)
+        self.foregroundHandBack = try container.decodeIfPresent(
+            ForegroundHandBackReport.self,
+            forKey: .foregroundHandBack)
+        self.targetWindowChange = try container.decodeIfPresent(TargetWindowChange.self, forKey: .targetWindowChange)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -133,9 +143,19 @@ public struct UIInputExecutionResult: Codable, Equatable, Sendable {
         try container.encodeIfPresent(self.actionName, forKey: .actionName)
         try container.encodeIfPresent(self.anchorPoint, forKey: .anchorPoint)
         try container.encode(self.duration, forKey: .duration)
+        try container.encodeIfPresent(self.foregroundHandBack, forKey: .foregroundHandBack)
+        try container.encodeIfPresent(self.targetWindowChange, forKey: .targetWindowChange)
     }
 
     private static var legacyOutcome: DesktopActionOutcome {
         .indeterminate(evidence: .completionUnknown)
     }
+}
+
+/// What happened to the exact target window after an accessibility press.
+public enum TargetWindowChange: String, Codable, Sendable {
+    /// The window is no longer listed (for example, the press closed a tab or the window).
+    case closed
+    /// The window is listed with other bounds (for example, the press opened a sheet that resized it).
+    case changed
 }

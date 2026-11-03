@@ -23,6 +23,10 @@ public final class UIAutomationOutcomeScript {
         case failure(any Error)
     }
 
+    /// Reported on every exact-window click result, as if the target had taken the front.
+    public var clickForegroundHandBack: ForegroundHandBackReport?
+    /// Reported on every exact-window click result, as if the press had closed or changed its window.
+    public var clickTargetWindowChange: TargetWindowChange?
     private var responses: [Operation: [Response]]
     private var defaultResponse: Response
     private var callCounts: [Operation: Int] = [:]
@@ -250,6 +254,8 @@ extension ScriptedUIAutomationActionOutcomeProviding {
             payload: (),
             outcome: outcome,
             targetIdentity: targetIdentity)
+            .withForegroundHandBack(self.uiAutomationOutcomeScript.clickForegroundHandBack)
+            .withTargetWindowChange(self.uiAutomationOutcomeScript.clickTargetWindowChange)
     }
 
     public func clickWithOutcome(

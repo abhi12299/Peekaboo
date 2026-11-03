@@ -399,7 +399,17 @@ extension TypeTool {
                 hint: "Observe the target before deciding whether to retry typing.",
                 causeDescription: error.causeDescription ?? error.localizedDescription))
         } catch {
-            guard sequence.mutationDisposition.mutationDispatched else { throw error }
+            guard sequence.mutationDisposition.mutationDispatched else {
+                // Refused before any key or focus went out (for example, the window holds no keyboard focus):
+                // a canonical refusal releases the snapshot lease, so the agent can still use the snapshot
+                // for set_value instead of having to observe again.
+                if let refusal = error as? TypeToolValidationError {
+                    throw DesktopActionFailure.preDispatchRefusal(
+                        reason: refusal.refusalReason,
+                        message: refusal.message)
+                }
+                throw error
+            }
             mutationTracker.delivery = nil
             let leaf = DesktopActionFailure.preDispatchRefusal(
                 reason: .operationUnsupported,

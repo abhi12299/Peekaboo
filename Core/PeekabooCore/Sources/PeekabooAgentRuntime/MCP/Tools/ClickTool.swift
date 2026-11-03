@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 import MCP
@@ -159,7 +160,11 @@ public struct ClickTool: MCPTool, MCPWindowObservingTool {
                     },
                     outcome: { $0.outcome },
                     keepsSnapshotReusable: {
-                        Self.keepsSnapshotReusable(request: request, resolution: resolution, outcome: $0.outcome)
+                        Self.keepsSnapshotReusable(
+                            request: request,
+                            resolution: resolution,
+                            outcome: $0.outcome,
+                            windowChange: $0.targetWindowChange)
                     })
                 modifierResult = nil
             } else {
@@ -201,7 +206,10 @@ public struct ClickTool: MCPTool, MCPWindowObservingTool {
                     reusableSnapshotId: Self.keepsSnapshotReusable(
                         request: request,
                         resolution: resolution,
-                        outcome: outcome) ? resolution.snapshotIdToInvalidate : nil))
+                        outcome: outcome,
+                        windowChange: actionResult.targetWindowChange) ? resolution.snapshotIdToInvalidate : nil,
+                    foregroundHandBack: actionResult.foregroundHandBack,
+                    targetWindowChange: actionResult.targetWindowChange))
         } catch is CancellationError {
             await self.discardObservation(id: waitedSnapshotID)
             throw CancellationError()
@@ -246,13 +254,16 @@ public struct ClickTool: MCPTool, MCPWindowObservingTool {
 
     /// A background element click delivered as an accessibility action leaves the snapshot's other element
     /// IDs usable: every later click still revalidates the exact window and that its element belongs to it.
-    /// Pointer events, other click variants and any uncertain outcome keep requiring a fresh observation.
+    /// Pointer events, other click variants, any uncertain outcome and a click that closed or changed its window
+    /// keep requiring a fresh observation.
     private static func keepsSnapshotReusable(
         request: ClickRequest,
         resolution: ClickResolution,
-        outcome: DesktopActionOutcome?) -> Bool
+        outcome: DesktopActionOutcome?,
+        windowChange: TargetWindowChange?) -> Bool
     {
         guard request.deliveryMode == .background,
+              windowChange == nil,
               request.modifiers.isEmpty,
               request.intent.automationType == .single,
               resolution.queryWait == nil,
@@ -608,6 +619,14 @@ public struct ClickTool: MCPTool, MCPWindowObservingTool {
             metaDict["cursor_restoration"] = .string(modifierResult.cursorRestoration.rawValue)
             metaDict["focus_restoration"] = .string(modifierResult.focusRestoration.rawValue)
         }
+        if let change = execution.targetWindowChange {
+            metaDict["target_window_change"] = .string(change.rawValue)
+        }
+        if let handBack = execution.foregroundHandBack {
+            metaDict["front_hand_backs"] = .int(handBack.handBacks)
+            metaDict["front_restored_pid"] = .int(Int(handBack.restoredProcessIdentifier))
+            metaDict["front_target_kept"] = .bool(handBack.targetKeptFront)
+        }
 
         let summary = ToolEventSummary(
             targetApp: resolution.targetApp,
@@ -623,9 +642,41 @@ public struct ClickTool: MCPTool, MCPWindowObservingTool {
             summary: summary,
             into: MCPToolResponseMetadataProjector.metadata(merging: metaDict, outcome: execution.outcome))
 
+        let windowNote = execution.targetWindowChange.map { " " + Self.targetWindowChangeNote($0) } ?? ""
+        let handBackNote = execution.foregroundHandBack.map { " " + Self.foregroundHandBackNote($0) } ?? ""
         return ToolResponse(
-            content: [.text(text: message, annotations: nil, _meta: nil)],
+            content: [.text(text: message + windowNote + handBackNote, annotations: nil, _meta: nil)],
             meta: metaValue)
+    }
+
+    /// The press is bound to its element, so a window that closed or changed afterwards is the click's effect.
+    static func targetWindowChangeNote(_ change: TargetWindowChange) -> String {
+        switch change {
+        case .closed:
+            "The click's window then closed (for example, the click closed a tab or the window); " +
+                "observe the app before the next action."
+        case .changed:
+            "The click's window then changed size or position (for example, the click opened a sheet); " +
+                "observe it before the next action."
+        }
+    }
+
+    /// AppKit activates an app that shows a modal alert or sheet after one of its menus was opened through
+    /// accessibility; the click hands the front back, and the agent should know what happened, also when the
+    /// hand-back did not take.
+    static func foregroundHandBackNote(_ report: ForegroundHandBackReport) -> String {
+        func name(_ pid: pid_t) -> String {
+            NSRunningApplication(processIdentifier: pid)?.localizedName ?? "PID \(pid)"
+        }
+        let target = name(report.targetProcessIdentifier)
+        let restored = name(report.restoredProcessIdentifier)
+        let cause = "\(target) came to the front during the click (apps do this when the click opens a modal " +
+            "alert or sheet); "
+        if report.targetKeptFront {
+            return cause + "Peekaboo could not hand the front back to \(restored); \(target) is still in front."
+        }
+        let times = report.handBacks == 1 ? "" : " \(report.handBacks) times"
+        return cause + "the front was handed back to \(restored)\(times)."
     }
 
     private func parseCoordinates(_ raw: String) throws -> CGPoint {
@@ -1270,6 +1321,8 @@ private struct ClickResponseExecution {
     let modifiers: [PointerModifier]
     let modifierResult: ForegroundModifierClickResult?
     let reusableSnapshotId: String?
+    var foregroundHandBack: ForegroundHandBackReport? = nil
+    var targetWindowChange: TargetWindowChange? = nil
 }
 
 private struct CapturedCoordinateSnapshot {
