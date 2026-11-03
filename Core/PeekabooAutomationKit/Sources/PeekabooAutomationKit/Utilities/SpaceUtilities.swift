@@ -150,7 +150,12 @@ public final class SpaceManagementService {
                 ownerPIDs: ownerPIDsArray))
         }
 
-        return spaces
+        // Number Spaces the way Mission Control shows them; CGSCopySpaces uses an order of its own.
+        let order = SpaceMissionControlOrder.order(
+            spaceIDs: spaces.map(\.id),
+            managedDisplaySpaces: CGSCopyManagedDisplaySpaces(connection) as NSArray)
+        let spacesByID = Dictionary(spaces.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        return order.compactMap { spacesByID[$0] }
     }
 
     /// Get information about all Spaces organized by display
