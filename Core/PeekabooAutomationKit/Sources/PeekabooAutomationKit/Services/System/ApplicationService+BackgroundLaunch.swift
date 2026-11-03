@@ -168,7 +168,7 @@ extension ApplicationService {
                 return self.applicationActivationHandler(application) ? .accepted : .refused
             },
             sleep: self.applicationActivationSleepHandler)
-        _ = try await handBack.watch(
+        _ = await handBack.watch(
             target: launchedProcessIdentifier,
             previousFrontmost: previousFrontmostProcessIdentifier,
             window: self.backgroundLaunchHandBackWindow,
@@ -178,5 +178,6 @@ extension ApplicationService {
             onRefused: { previous in
                 self.logger.warning("Background launch could not hand the foreground back to PID \(previous)")
             })
+        try Task.checkCancellation()
     }
 }

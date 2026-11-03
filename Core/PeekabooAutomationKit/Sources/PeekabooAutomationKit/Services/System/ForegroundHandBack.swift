@@ -8,13 +8,22 @@ public struct ForegroundHandBackReport: Codable, Equatable, Sendable {
     public let handBacks: Int
     /// The app that took the front.
     public let targetProcessIdentifier: pid_t
-    /// The app the front was handed back to.
+    /// The app the front was handed back to (or should have been, when `handBacks` is 0).
     public let restoredProcessIdentifier: pid_t
+    /// The target still held the front when the watch ended: the hand-back was refused, the previous app quit,
+    /// or the watch was cancelled before it could hand back.
+    public let targetKeptFront: Bool
 
-    public init(handBacks: Int, targetProcessIdentifier: pid_t, restoredProcessIdentifier: pid_t) {
+    public init(
+        handBacks: Int,
+        targetProcessIdentifier: pid_t,
+        restoredProcessIdentifier: pid_t,
+        targetKeptFront: Bool = false)
+    {
         self.handBacks = handBacks
         self.targetProcessIdentifier = targetProcessIdentifier
         self.restoredProcessIdentifier = restoredProcessIdentifier
+        self.targetKeptFront = targetKeptFront
     }
 }
 
@@ -49,8 +58,9 @@ struct ForegroundHandBack {
 
     /// Watches the front process for `window` and hands the front back whenever `target` holds it. With
     /// `checkFirst`, the first check happens before any wait, for an activation that already happened during
-    /// a synchronous accessibility press. `onAccepted` runs at each accepted hand-back, so a caller that is
-    /// cancelled mid-watch still knows what was dispatched. Returns nil when nothing was handed back.
+    /// a synchronous accessibility press. `onAccepted` runs at each accepted hand-back. Cancellation ends the
+    /// watch early without losing what it saw; callers that must fail on cancellation check for it afterwards.
+    /// Returns nil when the target never held the front, and otherwise a report, also when no hand-back took.
     func watch(
         target: pid_t,
         previousFrontmost: pid_t?,
@@ -58,20 +68,26 @@ struct ForegroundHandBack {
         pollInterval: Duration,
         checkFirst: Bool,
         onAccepted: () -> Void = {},
-        onRefused: (pid_t) -> Void = { _ in }) async throws -> ForegroundHandBackReport?
+        onRefused: (pid_t) -> Void = { _ in }) async -> ForegroundHandBackReport?
     {
         guard let previousFrontmost, previousFrontmost != target else { return nil }
         var handBacks = 0
+        var targetTookFront = false
         var elapsed = Duration.zero
         var waits = !checkFirst
         watching: while true {
             if waits {
                 guard elapsed < window else { break }
-                try await self.sleep(pollInterval)
+                do {
+                    try await self.sleep(pollInterval)
+                } catch {
+                    break watching
+                }
                 elapsed += pollInterval
             }
             waits = true
             guard self.frontmostProcessIdentifier() == target else { continue }
+            targetTookFront = true
             switch self.activate(previousFrontmost) {
             case .accepted:
                 handBacks += 1
@@ -82,11 +98,12 @@ struct ForegroundHandBack {
                 break watching
             }
         }
-        guard handBacks > 0 else { return nil }
+        guard targetTookFront else { return nil }
         return ForegroundHandBackReport(
             handBacks: handBacks,
             targetProcessIdentifier: target,
-            restoredProcessIdentifier: previousFrontmost)
+            restoredProcessIdentifier: previousFrontmost,
+            targetKeptFront: self.frontmostProcessIdentifier() == target)
     }
 }
 

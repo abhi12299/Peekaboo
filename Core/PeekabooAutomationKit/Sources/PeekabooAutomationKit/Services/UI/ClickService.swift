@@ -182,9 +182,11 @@ public final class ClickService {
 
     // MARK: - Private Methods
 
+    /// `atDispatchBoundary` runs once the target is revalidated, right before the accessibility mutation.
     private func performActionClick(
         _ request: ClickExecutionRequest,
-        captureReceipt: DesktopOperationPlan.CaptureReceipt) async throws -> UIInputExecutionResult.Action
+        captureReceipt: DesktopOperationPlan.CaptureReceipt,
+        atDispatchBoundary: @MainActor () -> Void) async throws -> UIInputExecutionResult.Action
     {
         let target = request.target
         let clickType = request.clickType
@@ -225,6 +227,7 @@ public final class ClickService {
                     } else if element.focusedElementIdentity != nil || element.role != originalRole {
                         throw ActionInputError.staleElement
                     }
+                    atDispatchBoundary()
                 })
             if let focusedElement = result.focusedElement,
                let exactWindow = captureReceipt.exactWindow
@@ -254,6 +257,7 @@ public final class ClickService {
             }
             return result
         case .right:
+            atDispatchBoundary()
             return try await self.actionInputDriver.tryRightClick(element: element)
         case .double:
             throw ActionInputError.unsupported(.actionUnsupported)
@@ -1255,7 +1259,7 @@ extension ClickService {
         window: Duration) async -> ForegroundHandBackReport?
     {
         guard let target else { return nil }
-        let report = try? await self.foregroundHandBack.watch(
+        let report = await self.foregroundHandBack.watch(
             target: target,
             previousFrontmost: previousFrontmost,
             window: window,
@@ -1265,8 +1269,12 @@ extension ClickService {
                 self.logger.warning("Click could not hand the front back to PID \(previous)")
             })
         if let report {
-            self.logger.notice(
-                "Click target PID \(target) took the front; handed it back to PID \(report.restoredProcessIdentifier)")
+            let restored = report.restoredProcessIdentifier
+            if report.targetKeptFront {
+                self.logger.warning("Click target PID \(target) took the front; could not hand it back to PID \(restored)")
+            } else {
+                self.logger.notice("Click target PID \(target) took the front; handed it back to PID \(restored)")
+            }
         }
         return report
     }
@@ -1453,6 +1461,15 @@ extension ClickService {
         var mutationReceipt: DesktopOperationPlan.CaptureReceipt?
         var syntheticDestination: SyntheticClickDestination?
         var targetWindowChange: TargetWindowChange?
+        // The app in front when the click is about to be sent (inside the lane, after preparation), and whether
+        // a dispatch was attempted at all. A background click hands the front back only to that app.
+        var previousFrontmost: pid_t?
+        var dispatchAttempted = false
+        let markDispatchBoundary: @MainActor () -> Void = {
+            guard targetProcessIdentifier != nil else { return }
+            previousFrontmost = self.foregroundHandBack.frontmostProcessIdentifier()
+            dispatchAttempted = true
+        }
         do {
             let plan = try DesktopOperationPlan(
                 verb: .click,
@@ -1505,7 +1522,10 @@ extension ClickService {
                         throw PeekabooError.operationError(message: "Click target was not prepared")
                     }
                     do {
-                        return try await self.performActionClick(request, captureReceipt: mutationReceipt)
+                        return try await self.performActionClick(
+                            request,
+                            captureReceipt: mutationReceipt,
+                            atDispatchBoundary: markDispatchBoundary)
                     } catch let error as ActionInputError
                         where strategy == .actionFirst &&
                         targetProcessIdentifier != nil &&
@@ -1518,6 +1538,7 @@ extension ClickService {
                     guard let syntheticDestination else {
                         throw PeekabooError.operationError(message: "Click destination was not prepared")
                     }
+                    markDispatchBoundary()
                     return try await self.performSyntheticClick(
                         target: target,
                         clickType: clickType,
@@ -1555,9 +1576,6 @@ extension ClickService {
                     }
                 })
             // A background click must not leave its target in front (see `ForegroundHandBack`).
-            let previousFrontmost = targetProcessIdentifier.map { _ in
-                self.foregroundHandBack.frontmostProcessIdentifier()
-            } ?? nil
             var result: UIInputExecutionResult
             do {
                 result = if request.acquireLane {
@@ -1566,17 +1584,21 @@ extension ClickService {
                     try await self.desktopOperationExecutor.executeOwned(plan)
                 }
             } catch {
-                _ = await self.handForegroundBack(
-                    from: targetProcessIdentifier,
-                    to: previousFrontmost,
-                    window: .zero)
+                if dispatchAttempted {
+                    _ = await self.handForegroundBack(
+                        from: targetProcessIdentifier,
+                        to: previousFrontmost,
+                        window: .zero)
+                }
                 throw error
             }
             result.targetWindowChange = targetWindowChange
-            result.foregroundHandBack = await self.handForegroundBack(
-                from: targetProcessIdentifier,
-                to: previousFrontmost,
-                window: Self.foregroundHandBackWindow)
+            if dispatchAttempted {
+                result.foregroundHandBack = await self.handForegroundBack(
+                    from: targetProcessIdentifier,
+                    to: previousFrontmost,
+                    window: Self.foregroundHandBackWindow)
+            }
             self.logger.debug("Click completed via \(result.path.rawValue, privacy: .public)")
             return result
         } catch let error as ActionInputError

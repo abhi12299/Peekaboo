@@ -13,6 +13,8 @@ import PeekabooFoundation
 @MainActor
 final class FakeFrontProcess {
     var processIdentifier: pid_t?
+    /// What each re-activation returns; `.accepted` also moves the front to the activated app.
+    var activation: ForegroundHandBack.Activation = .accepted
     private(set) var activatedProcessIdentifiers: [pid_t] = []
 
     init(_ processIdentifier: pid_t?) {
@@ -24,8 +26,10 @@ final class FakeFrontProcess {
             frontmostProcessIdentifier: { self.processIdentifier },
             activate: { pid in
                 self.activatedProcessIdentifiers.append(pid)
-                self.processIdentifier = pid
-                return .accepted
+                if self.activation == .accepted {
+                    self.processIdentifier = pid
+                }
+                return self.activation
             },
             sleep: { _ in })
     }
@@ -47,13 +51,16 @@ final class HandBackWindowTracker: WindowTrackingProviding, @unchecked Sendable 
 @MainActor
 final class HandBackElementResolver: AutomationElementResolving {
     private let element = AutomationElement(Element(AXUIElementCreateApplication(getpid())))
+    /// Runs while the click resolves its element, after it was queued and prepared, before the press.
+    var duringResolution: () -> Void = {}
 
     func resolve(
         detectedElement _: DetectedElement,
         windowContext _: WindowContext?,
         targetProcessIdentifier _: pid_t?) -> AutomationElement?
     {
-        self.element
+        self.duringResolution()
+        return self.element
     }
 
     func resolve(
@@ -77,8 +84,10 @@ final class HandBackActionInputDriver: ActionInputDriving {
 
     func tryClick(
         element _: AutomationElement,
-        beforeMutation _: @MainActor () throws -> Void) throws -> UIInputExecutionResult.Action
+        beforeMutation: @MainActor () throws -> Void) throws -> UIInputExecutionResult.Action
     {
+        // Like the real driver: revalidate right before the press.
+        try beforeMutation()
         self.pressCount += 1
         self.afterPress()
         return AutomationTestFixtures.uiActionReceipt(
@@ -137,6 +146,7 @@ struct PressClickHarness {
     let target = getpid()
     let front: FakeFrontProcess
     let action: HandBackActionInputDriver
+    var resolver = HandBackElementResolver()
     /// Whether window 42 still matches its capture-time receipt; read before and after the press.
     var windowMatchesReceipt: @Sendable () -> Bool = { true }
     /// Whether window 42 is still listed at all.
@@ -186,7 +196,7 @@ struct PressClickHarness {
             snapshotManager: InMemorySnapshotManager.containing(detection),
             inputPolicy: UIInputPolicy(defaultStrategy: .actionOnly),
             actionInputDriver: self.action,
-            automationElementResolver: HandBackElementResolver(),
+            automationElementResolver: self.resolver,
             exactWindowIdentityValidator: { _, _ in matches() },
             processStartIdentityProvider: { _ in 1 },
             foregroundHandBack: self.front.handBack,
