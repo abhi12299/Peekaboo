@@ -149,36 +149,34 @@ extension ApplicationService {
     }
 
     /// Some apps activate themselves while starting even when LaunchServices was told not to activate them
-    /// (Chrome took the foreground twice within 1.3 s in testing). For a bounded window after launch, poll the
-    /// frontmost process and re-activate the app the user had in front whenever the launched app takes it.
+    /// (Chrome took the foreground twice within 1.3 s in testing). For a bounded window after launch, the
+    /// shared `ForegroundHandBack` re-activates the app the user had in front whenever the launched app takes it.
     /// Each accepted re-activation is counted as a dispatched unit of the launch.
     private func handBackForegroundAfterBackgroundLaunch(
         launchedProcessIdentifier: pid_t,
         previousFrontmostProcessIdentifier: pid_t?,
         recordAcceptedHandBack: () -> Void) async throws
     {
-        guard let previousFrontmostProcessIdentifier,
-              previousFrontmostProcessIdentifier != launchedProcessIdentifier
-        else {
-            return
-        }
-        var elapsed = Duration.zero
-        while elapsed < self.backgroundLaunchHandBackWindow {
-            try await self.applicationActivationSleepHandler(self.backgroundLaunchHandBackPollInterval)
-            elapsed += self.backgroundLaunchHandBackPollInterval
-            guard self.frontmostProcessIdentifierProvider() == launchedProcessIdentifier else { continue }
-            guard let previousApplication = NSRunningApplication(
-                processIdentifier: previousFrontmostProcessIdentifier),
-                !previousApplication.isTerminated
-            else {
-                return
-            }
-            if self.applicationActivationHandler(previousApplication) {
-                recordAcceptedHandBack()
-            } else {
-                self.logger.warning(
-                    "Background launch could not hand the foreground back to PID \(previousFrontmostProcessIdentifier)")
-            }
-        }
+        let handBack = ForegroundHandBack(
+            frontmostProcessIdentifier: self.frontmostProcessIdentifierProvider,
+            activate: { processIdentifier in
+                guard let application = NSRunningApplication(processIdentifier: processIdentifier),
+                      !application.isTerminated
+                else {
+                    return .gone
+                }
+                return self.applicationActivationHandler(application) ? .accepted : .refused
+            },
+            sleep: self.applicationActivationSleepHandler)
+        _ = try await handBack.watch(
+            target: launchedProcessIdentifier,
+            previousFrontmost: previousFrontmostProcessIdentifier,
+            window: self.backgroundLaunchHandBackWindow,
+            pollInterval: self.backgroundLaunchHandBackPollInterval,
+            checkFirst: false,
+            onAccepted: recordAcceptedHandBack,
+            onRefused: { previous in
+                self.logger.warning("Background launch could not hand the foreground back to PID \(previous)")
+            })
     }
 }

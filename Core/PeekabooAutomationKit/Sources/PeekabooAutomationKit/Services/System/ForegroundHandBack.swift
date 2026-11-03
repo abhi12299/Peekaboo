@@ -49,13 +49,15 @@ struct ForegroundHandBack {
 
     /// Watches the front process for `window` and hands the front back whenever `target` holds it. With
     /// `checkFirst`, the first check happens before any wait, for an activation that already happened during
-    /// a synchronous accessibility press. Returns nil when nothing was handed back.
+    /// a synchronous accessibility press. `onAccepted` runs at each accepted hand-back, so a caller that is
+    /// cancelled mid-watch still knows what was dispatched. Returns nil when nothing was handed back.
     func watch(
         target: pid_t,
         previousFrontmost: pid_t?,
         window: Duration,
         pollInterval: Duration,
         checkFirst: Bool,
+        onAccepted: () -> Void = {},
         onRefused: (pid_t) -> Void = { _ in }) async throws -> ForegroundHandBackReport?
     {
         guard let previousFrontmost, previousFrontmost != target else { return nil }
@@ -73,6 +75,7 @@ struct ForegroundHandBack {
             switch self.activate(previousFrontmost) {
             case .accepted:
                 handBacks += 1
+                onAccepted()
             case .refused:
                 onRefused(previousFrontmost)
             case .gone:
