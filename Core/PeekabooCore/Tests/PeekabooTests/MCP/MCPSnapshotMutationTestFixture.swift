@@ -106,6 +106,8 @@ final class MCPSnapshotLeaseAutomationService: MockAutomationService,
     private(set) var setValueCalls = 0
     private(set) var exactHotkeyCalls = 0
     var typeError: (any Error)?
+    /// Makes the app report no focused element, as a window that does not hold keyboard focus does.
+    var reportsNoFocusedElement = false
     var mutationError: (any Error)?
     /// What an AX-only re-read of the window returns; nil keeps the mock's default (not implemented).
     var accessibilityTree: ElementDetectionResult?
@@ -131,7 +133,8 @@ final class MCPSnapshotLeaseAutomationService: MockAutomationService,
     }
 
     func getFocusedElement(targetProcessIdentifier _: pid_t) async -> UIFocusInfo? {
-        UIFocusInfo(
+        guard !self.reportsNoFocusedElement else { return nil }
+        return UIFocusInfo(
             role: self.focused.role,
             title: self.focused.title,
             value: nil,
