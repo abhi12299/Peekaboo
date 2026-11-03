@@ -115,6 +115,12 @@ public final class ClickService {
     private let operationFinalizer: @MainActor () -> Void
     private let tabSelectionVerifier: TabSelectionVerifier
     private let exactWindowPixelFocusExecutor: ExactWindowPixelFocusExecutor
+    private let foregroundHandBack: ForegroundHandBack
+
+    /// How long after a background click its target app is watched for taking the front. AppKit's activation
+    /// for a modal sheet lands inside the synchronous press; the short tail catches one that follows it.
+    static let foregroundHandBackWindow: Duration = .milliseconds(100)
+    static let foregroundHandBackPollInterval: Duration = .milliseconds(10)
 
     public convenience init(
         snapshotManager: (any SnapshotManagerProtocol)? = nil,
@@ -143,7 +149,8 @@ public final class ClickService {
         tabSelectionVerifier: @escaping TabSelectionVerifier = ClickService.verifyTabSelection,
         exactWindowPixelFocusExecutor: @escaping ExactWindowPixelFocusExecutor = { point, exactWindow in
             try await BackgroundInputDriver.focus(at: point, exactWindow: exactWindow)
-        })
+        },
+        foregroundHandBack: ForegroundHandBack = .live)
     {
         self.snapshotManager = snapshotManager ?? SnapshotManager()
         self.inputPolicy = inputPolicy
@@ -156,6 +163,7 @@ public final class ClickService {
         self.operationFinalizer = operationFinalizer
         self.tabSelectionVerifier = tabSelectionVerifier
         self.exactWindowPixelFocusExecutor = exactWindowPixelFocusExecutor
+        self.foregroundHandBack = foregroundHandBack
     }
 
     private static func verifyTabSelection(_ element: AutomationElement, valueBefore: Int?) async throws -> Bool {
@@ -1214,6 +1222,29 @@ extension ClickService {
         }
     }
 
+    /// Never throws: a click that was delivered stays delivered whether or not the front could be handed back.
+    private func handForegroundBack(
+        from target: pid_t?,
+        to previousFrontmost: pid_t?,
+        window: Duration) async -> ForegroundHandBackReport?
+    {
+        guard let target else { return nil }
+        let report = try? await self.foregroundHandBack.watch(
+            target: target,
+            previousFrontmost: previousFrontmost,
+            window: window,
+            pollInterval: Self.foregroundHandBackPollInterval,
+            checkFirst: true,
+            onRefused: { previous in
+                self.logger.warning("Click could not hand the front back to PID \(previous)")
+            })
+        if let report {
+            self.logger.notice(
+                "Click target PID \(target) took the front; handed it back to PID \(report.restoredProcessIdentifier)")
+        }
+        return report
+    }
+
     private func requireCurrentTarget(
         _ receipt: DesktopOperationPlan.CaptureReceipt,
         afterDispatch: Bool,
@@ -1488,11 +1519,28 @@ extension ClickService {
                         self.operationFinalizer()
                     }
                 })
-            let result = if request.acquireLane {
-                try await self.desktopOperationExecutor.execute(plan)
-            } else {
-                try await self.desktopOperationExecutor.executeOwned(plan)
+            // A background click must not leave its target in front (see `ForegroundHandBack`).
+            let previousFrontmost = targetProcessIdentifier.map { _ in
+                self.foregroundHandBack.frontmostProcessIdentifier()
+            } ?? nil
+            var result: UIInputExecutionResult
+            do {
+                result = if request.acquireLane {
+                    try await self.desktopOperationExecutor.execute(plan)
+                } else {
+                    try await self.desktopOperationExecutor.executeOwned(plan)
+                }
+            } catch {
+                _ = await self.handForegroundBack(
+                    from: targetProcessIdentifier,
+                    to: previousFrontmost,
+                    window: .zero)
+                throw error
             }
+            result.foregroundHandBack = await self.handForegroundBack(
+                from: targetProcessIdentifier,
+                to: previousFrontmost,
+                window: Self.foregroundHandBackWindow)
             self.logger.debug("Click completed via \(result.path.rawValue, privacy: .public)")
             return result
         } catch let error as ActionInputError

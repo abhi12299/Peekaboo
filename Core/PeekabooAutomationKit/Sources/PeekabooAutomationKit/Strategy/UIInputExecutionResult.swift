@@ -43,6 +43,8 @@ public struct UIInputExecutionResult: Codable, Equatable, Sendable {
     public var actionName: String?
     public var anchorPoint: CGPoint?
     public var duration: TimeInterval
+    /// Set when the target app took the front during a background operation and the front was handed back.
+    public var foregroundHandBack: ForegroundHandBackReport?
 
     /// Preserves the shipped v4 source contract. Historical callers do not provide outcome
     /// evidence, so their result is conservatively indeterminate and retry-unsafe.
@@ -105,6 +107,7 @@ public struct UIInputExecutionResult: Codable, Equatable, Sendable {
         case actionName
         case anchorPoint
         case duration
+        case foregroundHandBack
     }
 
     public init(from decoder: any Decoder) throws {
@@ -119,6 +122,9 @@ public struct UIInputExecutionResult: Codable, Equatable, Sendable {
         self.actionName = try container.decodeIfPresent(String.self, forKey: .actionName)
         self.anchorPoint = try container.decodeIfPresent(CGPoint.self, forKey: .anchorPoint)
         self.duration = try container.decode(TimeInterval.self, forKey: .duration)
+        self.foregroundHandBack = try container.decodeIfPresent(
+            ForegroundHandBackReport.self,
+            forKey: .foregroundHandBack)
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -133,6 +139,7 @@ public struct UIInputExecutionResult: Codable, Equatable, Sendable {
         try container.encodeIfPresent(self.actionName, forKey: .actionName)
         try container.encodeIfPresent(self.anchorPoint, forKey: .anchorPoint)
         try container.encode(self.duration, forKey: .duration)
+        try container.encodeIfPresent(self.foregroundHandBack, forKey: .foregroundHandBack)
     }
 
     private static var legacyOutcome: DesktopActionOutcome {
