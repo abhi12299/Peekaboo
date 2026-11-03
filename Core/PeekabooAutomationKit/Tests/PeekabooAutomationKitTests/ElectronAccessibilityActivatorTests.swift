@@ -48,6 +48,57 @@ struct ElectronAccessibilityActivatorTests {
         #expect(fake.probes.count == probesAfterFirstRead)
         #expect(fake.elapsed == elapsedAfterFirstRead)
     }
+
+    @Test
+    func `a window that never exposes web content costs one bounded wait per process`() async {
+        let fake = FakeElectronApp(webContentAfterEnableProbes: nil)
+        let activator = fake.activator()
+
+        let first = await activator.prepare(processIdentifier: 42, processStartIdentity: 7, windowID: 9)
+        let elapsedAfterFirstRead = fake.elapsed
+        let second = await activator.prepare(processIdentifier: 42, processStartIdentity: 7, windowID: 9)
+
+        #expect(first == .noWebContent)
+        #expect(second == .noWebContent)
+        #expect(elapsedAfterFirstRead >= ElectronAccessibilityActivator.webContentTimeout)
+        #expect(elapsedAfterFirstRead < ElectronAccessibilityActivator.webContentTimeout + .seconds(1))
+        #expect(fake.elapsed == elapsedAfterFirstRead)
+        #expect(fake.enableCalls == [42])
+    }
+
+    @Test
+    func `a relaunched app with a reused PID is set again`() async {
+        let fake = FakeElectronApp(webContentAfterEnableProbes: nil)
+        let activator = fake.activator()
+
+        _ = await activator.prepare(processIdentifier: 42, processStartIdentity: 7, windowID: 9)
+        _ = await activator.prepare(processIdentifier: 42, processStartIdentity: 8, windowID: 9)
+
+        #expect(fake.enableCalls == [42, 42])
+    }
+
+    @Test
+    func `an attribute the app does not support is not waited for`() async {
+        let fake = FakeElectronApp(webContentAfterEnableProbes: nil)
+        fake.enableError = ElementDetectionService.ElectronAccessibilityError.attributeRejected(.attributeUnsupported)
+        let activator = fake.activator()
+
+        let outcome = await activator.prepare(processIdentifier: 42, processStartIdentity: 7, windowID: 9)
+
+        #expect(outcome == .noWebContent)
+        #expect(fake.elapsed == .zero)
+    }
+
+    @Test
+    func `a set that timed out on a busy app is still waited for`() async {
+        let fake = FakeElectronApp(webContentAfterEnableProbes: 2)
+        fake.enableError = ElementDetectionService.ElectronAccessibilityError.attributeRejected(.cannotComplete)
+        let activator = fake.activator()
+
+        let outcome = await activator.prepare(processIdentifier: 42, processStartIdentity: 7, windowID: 9)
+
+        #expect(outcome == .ready)
+    }
 }
 
 /// An Electron app whose window exposes web content only some probes after manual accessibility was set.

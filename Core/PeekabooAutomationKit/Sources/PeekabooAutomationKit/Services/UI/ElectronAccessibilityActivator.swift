@@ -29,8 +29,15 @@ final class ElectronAccessibilityActivator {
     /// exposing web content. Electron keeps the tree on for the life of the process.
     private struct ProcessState {
         let processStartIdentity: UInt64?
-        var enabledAt: ContinuousClock.Instant?
+        var request = Request.notSent
         var readyWindowIDs: Set<CGWindowID?> = []
+    }
+
+    private enum Request {
+        case notSent
+        case sent(at: ContinuousClock.Instant)
+        /// The app does not know the attribute, so no tree is coming for it.
+        case unsupported
     }
 
     private var states: [pid_t: ProcessState] = [:]
@@ -65,12 +72,10 @@ final class ElectronAccessibilityActivator {
         }
         // Set once per process generation: every set restarts Electron's debounce. Recorded before waiting so
         // a concurrent read of the same app does not set it again.
-        let enabledAt = self.state(processIdentifier, processStartIdentity).enabledAt ?? {
-            try? self.enable(processIdentifier)
-            let enabledAt = self.now()
-            self.states[processIdentifier]?.enabledAt = enabledAt
-            return enabledAt
-        }()
+        if case .notSent = self.state(processIdentifier, processStartIdentity).request {
+            self.states[processIdentifier]?.request = self.sendRequest(processIdentifier)
+        }
+        guard case let .sent(enabledAt) = self.states[processIdentifier]?.request else { return .noWebContent }
         let deadline = enabledAt.advanced(by: Self.webContentTimeout)
         while self.now() < deadline {
             await self.sleep(Self.pollInterval)
@@ -80,6 +85,20 @@ final class ElectronAccessibilityActivator {
             }
         }
         return .noWebContent
+    }
+
+    private func sendRequest(_ processIdentifier: pid_t) -> Request {
+        let sentAt = self.now()
+        do {
+            try self.enable(processIdentifier)
+        } catch let ElementDetectionService.ElectronAccessibilityError.attributeRejected(error)
+            where error != .cannotComplete
+        {
+            return .unsupported
+        } catch {
+            // A busy app that timed out the request may still apply it, so it is waited for.
+        }
+        return .sent(at: sentAt)
     }
 
     /// The recorded state of this process generation; a new generation of the PID starts over.
