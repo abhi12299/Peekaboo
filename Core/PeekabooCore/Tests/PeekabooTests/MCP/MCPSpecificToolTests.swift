@@ -876,8 +876,8 @@ struct MCPKeyboardCapabilitySchemaTests {
     @Test
     func `Action tool explains foreground exposing accessibility actions`() {
         let description = makeTestTool(ActionTool.init).description
-        #expect(description.contains("including AXPress and"))
-        #expect(description.contains("AXShowMenu"))
+        #expect(description.contains("runs AXPress on a snapshot element as a background `click`"))
+        #expect(description.contains("such as AXShowMenu"))
         #expect(description.contains("background semantic tool"))
         #expect(description.contains("foreground-capable session"))
     }
