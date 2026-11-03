@@ -59,7 +59,7 @@ public final class ElementDetectionService {
     typealias DetachedAXObservationRunner = @MainActor @Sendable (
         DetachedAXObservationRequest) async throws -> DetachedAXObservationResult
     typealias ApplicationKindProvider = @MainActor (NSRunningApplication) -> WindowRoutedApplicationKind
-    typealias ElectronAccessibilityPreparer = @MainActor (pid_t) throws -> Void
+    typealias WindowPlacementProvider = @MainActor (CGWindowID) -> WindowSpacePlacement
 
     private let logger = Logger(subsystem: "boo.peekaboo.core", category: "ElementDetectionService")
     private let snapshotManager: (any SnapshotManagerProtocol)?
@@ -68,7 +68,8 @@ public final class ElementDetectionService {
     private let axTreeCache: ElementDetectionCache
     private let detachedAXObservationRunner: DetachedAXObservationRunner
     private let applicationKindProvider: ApplicationKindProvider
-    private let electronAccessibilityPreparer: ElectronAccessibilityPreparer
+    let electronAccessibilityActivator: ElectronAccessibilityActivator
+    let windowPlacementProvider: WindowPlacementProvider
     private let webFocusFallback = WebFocusFallback()
     private let menuBarElementCollector = MenuBarElementCollector()
     private let axTreeCollector = AXTreeCollector()
@@ -98,8 +99,8 @@ public final class ElementDetectionService {
         axTreeCache: ElementDetectionCache,
         detachedAXObservationRunner: @escaping DetachedAXObservationRunner,
         applicationKindProvider: @escaping ApplicationKindProvider = WindowRoutedApplicationClassifier.kind(of:),
-        electronAccessibilityPreparer: @escaping ElectronAccessibilityPreparer =
-            ElementDetectionService.enableElectronManualAccessibility)
+        electronAccessibilityActivator: ElectronAccessibilityActivator = .shared,
+        windowPlacementProvider: @escaping WindowPlacementProvider = WindowSpacePlacement.live(windowID:))
     {
         self.snapshotManager = snapshotManager
         self.windowResolver =
@@ -107,7 +108,8 @@ public final class ElementDetectionService {
         self.axTreeCache = axTreeCache
         self.detachedAXObservationRunner = detachedAXObservationRunner
         self.applicationKindProvider = applicationKindProvider
-        self.electronAccessibilityPreparer = electronAccessibilityPreparer
+        self.electronAccessibilityActivator = electronAccessibilityActivator
+        self.windowPlacementProvider = windowPlacementProvider
     }
 
     /// Detect UI elements in a screenshot
@@ -399,12 +401,11 @@ public final class ElementDetectionService {
         // Electron exposes its web contents to AX only after a client opts in. Chromium browsers reject the
         // attribute and already expose their tree, so only Electron apps are prepared.
         if self.applicationKindProvider(targetApp) == .electron {
-            do {
-                try self.electronAccessibilityPreparer(processIdentifier)
-            } catch {
-                self.logger.warning(
-                    "Could not enable AXManualAccessibility for PID \(processIdentifier): \(String(describing: error))")
-            }
+            try await self.prepareElectronWebContent(
+                targetApp: targetApp,
+                processIdentifier: processIdentifier,
+                processStartIdentity: processStartIdentity,
+                windowID: context?.windowID.flatMap { CGWindowID(exactly: $0) })
         }
 
         let cacheKey = canReuseAXTree
