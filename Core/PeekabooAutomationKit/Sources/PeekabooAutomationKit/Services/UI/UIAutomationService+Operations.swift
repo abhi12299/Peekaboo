@@ -143,6 +143,7 @@ extension UIAutomationService {
                 })
         }
         return UIAutomationActionResult(payload: (), outcome: result.outcome)
+            .withForegroundHandBack(result.foregroundHandBack)
     }
 
     public func click(
@@ -183,6 +184,7 @@ extension UIAutomationService {
             targetProcessIdentifier: targetProcessIdentifier)
 
         return UIAutomationActionResult(payload: (), outcome: result.outcome)
+            .withForegroundHandBack(result.foregroundHandBack)
     }
 
     public func click(
@@ -259,6 +261,7 @@ extension UIAutomationService {
             payload: (),
             outcome: result.outcome,
             targetIdentity: DesktopTargetIdentity(processIdentity: expectedProcessIdentity))
+            .withForegroundHandBack(result.foregroundHandBack)
     }
 
     public func click(
@@ -339,6 +342,7 @@ extension UIAutomationService {
             payload: (),
             outcome: result.outcome,
             targetIdentity: DesktopTargetIdentity(exactWindow: exactWindow))
+            .withForegroundHandBack(result.foregroundHandBack)
     }
 
     /// Background delivery must remain invisible to the foreground user. Visualizer windows are

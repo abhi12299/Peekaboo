@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 import MCP
@@ -201,7 +202,8 @@ public struct ClickTool: MCPTool, MCPWindowObservingTool {
                     reusableSnapshotId: Self.keepsSnapshotReusable(
                         request: request,
                         resolution: resolution,
-                        outcome: outcome) ? resolution.snapshotIdToInvalidate : nil))
+                        outcome: outcome) ? resolution.snapshotIdToInvalidate : nil,
+                    foregroundHandBack: actionResult.foregroundHandBack))
         } catch is CancellationError {
             await self.discardObservation(id: waitedSnapshotID)
             throw CancellationError()
@@ -608,6 +610,10 @@ public struct ClickTool: MCPTool, MCPWindowObservingTool {
             metaDict["cursor_restoration"] = .string(modifierResult.cursorRestoration.rawValue)
             metaDict["focus_restoration"] = .string(modifierResult.focusRestoration.rawValue)
         }
+        if let handBack = execution.foregroundHandBack {
+            metaDict["front_hand_backs"] = .int(handBack.handBacks)
+            metaDict["front_restored_pid"] = .int(Int(handBack.restoredProcessIdentifier))
+        }
 
         let summary = ToolEventSummary(
             targetApp: resolution.targetApp,
@@ -623,9 +629,22 @@ public struct ClickTool: MCPTool, MCPWindowObservingTool {
             summary: summary,
             into: MCPToolResponseMetadataProjector.metadata(merging: metaDict, outcome: execution.outcome))
 
+        let handBackNote = execution.foregroundHandBack.map { " " + Self.foregroundHandBackNote($0) } ?? ""
         return ToolResponse(
-            content: [.text(text: message, annotations: nil, _meta: nil)],
+            content: [.text(text: message + handBackNote, annotations: nil, _meta: nil)],
             meta: metaValue)
+    }
+
+    /// AppKit activates an app that shows a modal alert or sheet after one of its menus was opened through
+    /// accessibility; the click handed the front back, and the agent should know both happened.
+    static func foregroundHandBackNote(_ report: ForegroundHandBackReport) -> String {
+        func name(_ pid: pid_t) -> String {
+            NSRunningApplication(processIdentifier: pid)?.localizedName ?? "PID \(pid)"
+        }
+        let times = report.handBacks == 1 ? "" : " \(report.handBacks) times"
+        return "\(name(report.targetProcessIdentifier)) came to the front during the click (apps do this when " +
+            "the click opens a modal alert or sheet); the front was handed back to " +
+            "\(name(report.restoredProcessIdentifier))\(times)."
     }
 
     private func parseCoordinates(_ raw: String) throws -> CGPoint {
@@ -1270,6 +1289,7 @@ private struct ClickResponseExecution {
     let modifiers: [PointerModifier]
     let modifierResult: ForegroundModifierClickResult?
     let reusableSnapshotId: String?
+    var foregroundHandBack: ForegroundHandBackReport? = nil
 }
 
 private struct CapturedCoordinateSnapshot {
