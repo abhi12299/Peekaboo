@@ -1252,15 +1252,25 @@ extension ClickService {
         return self.exactWindowIsListed(windowID) ? .changed : .closed
     }
 
-    /// A press refused before dispatch (unsupported, stale, permission) sent nothing, so there is nothing to undo.
+    /// Whether an error raised after the press boundary may follow a press that reached the app. Only definite
+    /// refusals sent nothing: no AXPress action, a dead element, AX disabled, cancellation before the send, or a
+    /// failure that says nothing was dispatched. A timed-out or lost reply (`targetUnavailable`, `failed`) can
+    /// follow a press that opened a modal alert.
     private static func mayHaveDispatched(_ error: any Error) -> Bool {
         switch error {
+        case let error as ActionInputError:
+            switch error {
+            case .unsupported, .staleElement, .permissionDenied:
+                false
+            case .targetUnavailable, .failed:
+                true
+            }
         case let failure as DesktopActionFailure:
             failure.outcome.dispatchState.mutationDispatched
-        case is InputDeliveryIndeterminateError:
-            true
-        default:
+        case is CancellationError:
             false
+        default:
+            true
         }
     }
 
@@ -1535,10 +1545,19 @@ extension ClickService {
                         throw PeekabooError.operationError(message: "Click target was not prepared")
                     }
                     do {
-                        return try await self.performActionClick(
-                            request,
-                            captureReceipt: mutationReceipt,
-                            atDispatchBoundary: markDispatchBoundary)
+                        do {
+                            return try await self.performActionClick(
+                                request,
+                                captureReceipt: mutationReceipt,
+                                atDispatchBoundary: markDispatchBoundary)
+                        } catch {
+                            // Keep watching only when the press may have reached the app (a lost or timed-out
+                            // reply); a definite refusal sent nothing.
+                            if dispatchAttempted, !Self.mayHaveDispatched(error) {
+                                dispatchAttempted = false
+                            }
+                            throw error
+                        }
                     } catch let error as ActionInputError
                         where strategy == .actionFirst &&
                         targetProcessIdentifier != nil &&
@@ -1551,8 +1570,8 @@ extension ClickService {
                     guard let syntheticDestination else {
                         throw PeekabooError.operationError(message: "Click destination was not prepared")
                     }
-                    // The executor falls back to synthesis only when the press dispatched nothing.
-                    dispatchAttempted = false
+                    // A fallback after an uncertain press keeps watching for the front it may have caused; the
+                    // pointer route itself is not watched.
                     return try await self.performSyntheticClick(
                         target: target,
                         clickType: clickType,
@@ -1598,7 +1617,7 @@ extension ClickService {
                     try await self.desktopOperationExecutor.executeOwned(plan)
                 }
             } catch {
-                if dispatchAttempted, Self.mayHaveDispatched(error) {
+                if dispatchAttempted {
                     _ = await self.handForegroundBack(
                         from: targetProcessIdentifier,
                         to: previousFrontmost,
@@ -1607,7 +1626,7 @@ extension ClickService {
                 throw error
             }
             result.targetWindowChange = targetWindowChange
-            if dispatchAttempted, result.path == .action {
+            if dispatchAttempted {
                 result.foregroundHandBack = await self.handForegroundBack(
                     from: targetProcessIdentifier,
                     to: previousFrontmost,

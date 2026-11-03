@@ -110,4 +110,27 @@ struct ClickServiceForegroundHandBackTests {
         #expect(result?.foregroundHandBack == nil)
         #expect(front.activatedProcessIdentifiers.isEmpty)
     }
+
+    @Test(arguments: [
+        (ActionInputError.targetUnavailable, UIInputStrategy.actionOnly),
+        (ActionInputError.failed("lost reply"), UIInputStrategy.actionOnly),
+        (ActionInputError.targetUnavailable, UIInputStrategy.actionFirst),
+    ])
+    @MainActor
+    func `a press whose outcome is uncertain still hands the front back`(
+        error: ActionInputError,
+        strategy: UIInputStrategy) async throws
+    {
+        // An AXPress that blocks on an app-modal alert times out (cannotComplete) after the app took the front.
+        let front = FakeFrontProcess(Self.userFrontProcess)
+        let target = getpid()
+        var harness = PressClickHarness(
+            front: front,
+            action: HandBackActionInputDriver(afterPress: { front.processIdentifier = target }, pressError: error))
+        harness.strategy = strategy
+
+        _ = try? await harness.click()
+
+        #expect(front.activatedProcessIdentifiers == [Self.userFrontProcess])
+    }
 }
