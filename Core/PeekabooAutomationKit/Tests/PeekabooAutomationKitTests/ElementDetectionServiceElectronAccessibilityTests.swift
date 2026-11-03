@@ -118,6 +118,28 @@ struct ElementDetectionServiceElectronAccessibilityTests {
     }
 
     @Test
+    func `a native Electron window on another Space is inspected, not refused`() async throws {
+        let target = try Self.targetApplication()
+        let events = EventLog()
+        let windowID = try Self.windowID(of: target)
+        let fake = FakeElectronApp(webContentAfterEnableProbes: nil)
+        fake.nativeWindowIDs = [windowID]
+        let service = Self.service(
+            kind: .electron,
+            fake: fake,
+            events: events,
+            placement: .otherSpace(spaceID: 5, spaceNumber: 3),
+            fullyCovered: true)
+
+        _ = try await service.inspectElements(
+            snapshotId: nil,
+            windowContext: Self.context(for: target, windowID: windowID))
+
+        #expect(events.entries == ["observe:\(target.processIdentifier)"])
+        #expect(fake.enableCalls.isEmpty)
+    }
+
+    @Test
     func `an Electron window on a visible Space without web content is still inspected`() async throws {
         let target = try Self.targetApplication()
         let events = EventLog()

@@ -67,6 +67,51 @@ struct ElectronAccessibilityActivatorTests {
     }
 
     @Test
+    func `a window opened after the first wait ran out gets its own short wait`() async {
+        let fake = FakeElectronApp(webContentAfterEnableProbes: nil)
+        let activator = fake.activator()
+        _ = await activator.prepare(processIdentifier: 42, processStartIdentity: 7, windowID: 9)
+        fake.webContentAfterEnableProbes = fake.probesSinceEnable + 2
+        let elapsedBefore = fake.elapsed
+
+        let outcome = await activator.prepare(processIdentifier: 42, processStartIdentity: 7, windowID: 10)
+
+        #expect(outcome == .ready)
+        #expect(fake.enableCalls == [42])
+        #expect(fake.elapsed > elapsedBefore)
+        #expect(fake.elapsed - elapsedBefore <= ElectronAccessibilityActivator.newWindowGrace)
+    }
+
+    @Test
+    func `a native window of an Electron app is ready without setting anything or waiting`() async {
+        let fake = FakeElectronApp(webContentAfterEnableProbes: nil)
+        fake.nativeWindowIDs = [9]
+        let activator = fake.activator()
+
+        let outcome = await activator.prepare(processIdentifier: 42, processStartIdentity: 7, windowID: 9)
+
+        #expect(outcome == .ready)
+        #expect(fake.enableCalls.isEmpty)
+        #expect(fake.elapsed == .zero)
+    }
+
+    @Test
+    func `a window that cannot be read turns the tree on but is neither waited for nor cached`() async {
+        let fake = FakeElectronApp(webContentAfterEnableProbes: nil)
+        fake.unreadableWindowIDs = [9]
+        let activator = fake.activator()
+
+        let first = await activator.prepare(processIdentifier: 42, processStartIdentity: 7, windowID: 9)
+        let second = await activator.prepare(processIdentifier: 42, processStartIdentity: 7, windowID: 9)
+
+        #expect(first == .ready)
+        #expect(second == .ready)
+        #expect(fake.enableCalls == [42])
+        #expect(fake.elapsed == .zero)
+        #expect(fake.probes.count == 2)
+    }
+
+    @Test
     func `a relaunched app with a reused PID is set again`() async {
         let fake = FakeElectronApp(webContentAfterEnableProbes: nil)
         let activator = fake.activator()
@@ -110,13 +155,17 @@ final class FakeElectronApp {
     }
 
     var hasWebContentBeforeEnable = false
+    /// Windows that hold no Chromium content at all (native message boxes, Open/Save panels).
+    var nativeWindowIDs: Set<CGWindowID?> = []
+    /// Windows the probe cannot find or read in time.
+    var unreadableWindowIDs: Set<CGWindowID?> = []
     /// Probes after the enable call that still see no web content; nil means it never appears.
     var webContentAfterEnableProbes: Int?
     var enableError: (any Error)?
     private(set) var enableCalls: [pid_t] = []
     private(set) var probes: [Probe] = []
     private(set) var elapsed: Duration = .zero
-    private var probesSinceEnable = 0
+    private(set) var probesSinceEnable = 0
     private let start = ContinuousClock.now
 
     init(webContentAfterEnableProbes: Int? = 0) {
@@ -125,7 +174,7 @@ final class FakeElectronApp {
 
     func activator() -> ElectronAccessibilityActivator {
         ElectronAccessibilityActivator(
-            hasWebContent: { [unowned self] processIdentifier, windowID in
+            windowContent: { [unowned self] processIdentifier, windowID in
                 self.probe(processIdentifier: processIdentifier, windowID: windowID)
             },
             enable: { [unowned self] processIdentifier in
@@ -136,11 +185,17 @@ final class FakeElectronApp {
             now: { [unowned self] in self.start.advanced(by: self.elapsed) })
     }
 
-    private func probe(processIdentifier: pid_t, windowID: CGWindowID?) -> Bool {
+    private func probe(processIdentifier: pid_t, windowID: CGWindowID?) -> ElectronWindowContent {
         self.probes.append(Probe(processIdentifier: processIdentifier, windowID: windowID))
-        guard !self.enableCalls.isEmpty else { return self.hasWebContentBeforeEnable }
+        if self.nativeWindowIDs.contains(windowID) { return .native }
+        if self.unreadableWindowIDs.contains(windowID) { return .unknown }
+        guard !self.enableCalls.isEmpty else {
+            return self.hasWebContentBeforeEnable ? .webContent : .chromiumHostWithoutWebContent
+        }
         self.probesSinceEnable += 1
-        guard let threshold = self.webContentAfterEnableProbes else { return false }
-        return self.probesSinceEnable > threshold
+        guard let threshold = self.webContentAfterEnableProbes, self.probesSinceEnable > threshold else {
+            return .chromiumHostWithoutWebContent
+        }
+        return .webContent
     }
 }
