@@ -346,8 +346,11 @@ struct SpaceCommandActionTests {
             from: Data(self.output(from: result).utf8)
         )
         #expect(response.success)
-        let moveCalls = await self.spaceState(context) { $0.moveToCurrentCalls }
+        // "Current" is pinned to the active Space in the inventory, then moved to like any other Space.
+        let moveCalls = await self.spaceState(context) { $0.moveWindowCalls.map(\.spaceID) }
+        let activeSpaceID = await self.spaceState(context) { $0.spaces.first(where: \.isActive)?.id }
         #expect(!moveCalls.isEmpty)
+        #expect(moveCalls.allSatisfy { $0 == activeSpaceID })
     }
 
     @Test
@@ -385,6 +388,9 @@ struct SpaceCommandActionTests {
             "space", "move-window", "--window-id", "301", "--to-current", "--json",
         ], context: context)
         #expect(json.exitStatus == 0)
+        // The destination is pinned to the Space read before dispatch, so the report names the Space moved to.
+        let pinned = await self.spaceState(context) { $0.moveWindowCalls.map(\.spaceID) }
+        #expect(pinned == [1])
         let response = try JSONDecoder().decode(
             WindowSpaceActionResponse.self,
             from: Data(self.output(from: json).utf8)
@@ -577,7 +583,7 @@ struct SpaceCommandActionTests {
         ], context: context)
 
         #expect(result.exitStatus == 0)
-        let moveCalls = await self.spaceState(context) { $0.moveToCurrentCalls }
+        let moveCalls = await self.spaceState(context) { $0.moveWindowCalls.map(\.windowID) }
         #expect(moveCalls == [302])
     }
 
@@ -590,7 +596,7 @@ struct SpaceCommandActionTests {
         ], context: context)
 
         #expect(result.exitStatus == 0)
-        let moveCalls = await self.spaceState(context) { $0.moveToCurrentCalls }
+        let moveCalls = await self.spaceState(context) { $0.moveWindowCalls.map(\.windowID) }
         #expect(moveCalls == [302])
     }
 

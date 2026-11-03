@@ -445,6 +445,9 @@ struct SpaceToolExecutionHostTests {
         ]))
 
         #expect(response.isError == false)
+        // The destination is pinned to the Space read before dispatch, so the report names the Space moved to.
+        #expect(stubSpaceService.moveWindowCalls.map(\.spaceID) == [5])
+        #expect(stubSpaceService.moveToCurrentCalls.isEmpty)
         guard case let .text(text, _, _) = try #require(response.content.first) else {
             Issue.record("Expected a text result")
             return

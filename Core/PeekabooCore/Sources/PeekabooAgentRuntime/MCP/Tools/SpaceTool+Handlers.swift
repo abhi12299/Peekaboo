@@ -209,12 +209,20 @@ extension SpaceTool {
         expectedIdentity: WindowMutationIdentity,
         startTime: Date) throws -> ToolResponse
     {
+        // Pin "current" once, so the Space moved to and the Space reported are the same one.
         let spacesBefore = service.getAllSpaces()
-        let actionResult = try Self.requireSuccessfulMoveResult(
-            service.moveWindowToCurrentSpaceResult(
+        let pinnedSpaceID = spacesBefore.first(where: \.isActive)?.id
+        let moveResult = if let pinnedSpaceID {
+            try service.moveWindowToSpaceResult(
                 windowID: windowID,
-                expectedIdentity: expectedIdentity),
-            expectedIdentity: expectedIdentity)
+                expectedIdentity: expectedIdentity,
+                spaceID: pinnedSpaceID)
+        } else {
+            try service.moveWindowToCurrentSpaceResult(
+                windowID: windowID,
+                expectedIdentity: expectedIdentity)
+        }
+        let actionResult = try Self.requireSuccessfulMoveResult(moveResult, expectedIdentity: expectedIdentity)
         let spacesAfter = service.getAllSpaces()
 
         let executionTime = Date().timeIntervalSince(startTime)
@@ -225,7 +233,7 @@ extension SpaceTool {
             "execution_time": .double(executionTime),
         ]
         let message: String
-        if let destinationID = spacesBefore.first(where: \.isActive)?.id {
+        if let destinationID = pinnedSpaceID {
             message = self.reportMessage(
                 SpaceMoveReport.text(
                     windowTitle: windowInfo.title,
@@ -516,7 +524,10 @@ extension SpaceTool {
         after: [SpaceInfo]) -> [String: Value]
     {
         var metadata: [String: Value] = ["space_id": .double(Double(destinationID))]
-        if let index = before.firstIndex(where: { $0.id == destinationID }) {
+        // Number the landed Space as `space list` prints it now; Mission Control may reorder during the move.
+        if let index = after.firstIndex(where: { $0.id == destinationID })
+            ?? before.firstIndex(where: { $0.id == destinationID })
+        {
             metadata["space_number"] = .double(Double(index + 1))
         }
         if let userBefore = before.first(where: \.isActive)?.id, let userAfter = after.first(where: \.isActive)?.id {

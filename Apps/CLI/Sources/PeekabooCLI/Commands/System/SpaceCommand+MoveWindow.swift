@@ -100,18 +100,28 @@ struct MoveWindowSubcommand: ActionOutputFormattable, ErrorHandlingCommand,
             let spaceService = SpaceCommandEnvironment.service
 
             if self.toCurrent {
+                // Pin "current" once, so the Space moved to and the Space reported are the same one.
                 let spacesBefore = await spaceService.getAllSpaces()
+                let pinnedSpaceID = spacesBefore.first(where: \.isActive)?.id
                 self.resolvedRuntime.beginInteractionMutation()
-                let actionResult = try await spaceService.moveWindowToCurrentSpaceResult(
-                    windowID: windowID,
-                    expectedIdentity: expectedWindow.identity
-                )
+                let actionResult = if let pinnedSpaceID {
+                    try await spaceService.moveWindowToSpaceResult(
+                        windowID: windowID,
+                        expectedIdentity: expectedWindow.identity,
+                        spaceID: pinnedSpaceID
+                    )
+                } else {
+                    try await spaceService.moveWindowToCurrentSpaceResult(
+                        windowID: windowID,
+                        expectedIdentity: expectedWindow.identity
+                    )
+                }
                 let (outcome, targetIdentity) = try Self.validateMoveResult(
                     actionResult,
                     expectedWindow: expectedWindow
                 )
                 let placement = await Self.placement(
-                    destinationID: spacesBefore.first(where: \.isActive)?.id,
+                    destinationID: pinnedSpaceID,
                     windowTitle: windowInfo.title,
                     outcome: outcome,
                     spacesBefore: spacesBefore,
@@ -285,7 +295,9 @@ struct MoveWindowSubcommand: ActionOutputFormattable, ErrorHandlingCommand,
         guard let destinationID else { return Placement() }
         let spacesAfter = await spaceService.getAllSpaces()
         var placement = Placement(spaceID: destinationID)
-        placement.spaceNumber = spacesBefore.firstIndex { $0.id == destinationID }.map { $0 + 1 }
+        // Number the landed Space as `space list` prints it now; Mission Control may reorder during the move.
+        placement.spaceNumber = (spacesAfter.firstIndex { $0.id == destinationID }
+            ?? spacesBefore.firstIndex { $0.id == destinationID }).map { $0 + 1 }
         if let before = spacesBefore.first(where: \.isActive)?.id,
            let after = spacesAfter.first(where: \.isActive)?.id {
             placement.userSpaceChanged = before != after
