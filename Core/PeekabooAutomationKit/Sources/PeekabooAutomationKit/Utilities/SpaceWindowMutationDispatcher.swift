@@ -95,6 +95,18 @@ enum SpaceWindowMutationDispatcher {
                 targetReceipt: targetReceipt)
         }
         guard finalMemberships == [targetSpaceID] else {
+            if finalMemberships == memberships {
+                let place = memberships.isEmpty
+                    ? "on no Space"
+                    : "still on Space ID \(memberships.map(String.init).joined(separator: ", "))"
+                throw DesktopActionFailure.suspectedNoop(
+                    delivery: self.moveDelivery,
+                    unitCount: .one,
+                    message: "macOS did not move the window to Space ID \(targetSpaceID); it is \(place).",
+                    hint: "This macOS may not let Peekaboo move another app's window between Spaces. " +
+                        "Use the window where it is, or ask the user to move it.")
+                    .attributed(to: targetReceipt)
+            }
             throw DesktopActionFailure.indeterminate(
                 delivery: self.moveDelivery,
                 evidence: .completionUnknown,

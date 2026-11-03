@@ -137,6 +137,33 @@ struct SpaceWindowMutationDispatcherTests {
     }
 
     @Test
+    func `move that macOS ignores fails as a suspected no-op that says the window stayed put`() throws {
+        var moves: [CGSSpaceID] = []
+
+        do {
+            _ = try SpaceWindowMutationDispatcher.moveWindow(
+                windowID: 4040,
+                expectedIdentity: Self.identity(),
+                targetSpaceID: 22,
+                backend: .init(
+                    destinationExists: { _ in true },
+                    validateIdentity: { _ in true },
+                    spaceIDsForWindow: { [11] },
+                    moveWindow: { moves.append($0) },
+                    awaitMemberships: { _ in [11] }))
+            Issue.record("Expected an ignored move to fail")
+        } catch let failure as DesktopActionFailure {
+            #expect(failure.outcome.state == .suspectedNoop)
+            #expect(failure.outcome.dispatchState.unitCount == .one)
+            #expect(failure.message.contains("macOS did not move the window"))
+            #expect(failure.message.contains("still on Space ID 11"))
+            #expect(failure.targetReceipt == Self.targetReceipt)
+        }
+
+        #expect(moves == [22])
+    }
+
+    @Test
     func `invalid destination refuses before membership reads or CGS dispatch`() throws {
         var events: [String] = []
 
