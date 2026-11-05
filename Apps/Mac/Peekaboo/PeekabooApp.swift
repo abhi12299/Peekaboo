@@ -312,7 +312,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         self.updateAgentSessionUIVisibility()
 
-        if self.bridgeHost == nil, self.bridgeStartTask == nil {
+        // Visualizer-only mode: a live Bridge socket makes in-process CLI/MCP runtimes refuse capture
+        // when they cannot authenticate it (for example dev-signed builds), so allow opting out.
+        let bridgeDisabled = UserDefaults.standard.bool(forKey: "PeekabooDisableBridgeHost")
+            || ProcessInfo.processInfo.environment["PEEKABOO_APP_DISABLE_BRIDGE"] == "1"
+        if bridgeDisabled {
+            self.logger.info("Peekaboo Bridge host disabled; running as visualizer only")
+        } else if self.bridgeHost == nil, self.bridgeStartTask == nil {
             self.startBridgeHost(services: context.services)
         }
 
