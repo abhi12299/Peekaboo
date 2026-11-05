@@ -5,6 +5,7 @@ import PeekabooCLI
 @main
 struct Main {
     static func main() async {
+        runPhantomCursorHostIfRequested()
         do {
             let gateApplied = try AgentExecutionReleaseGate.waitIfConfigured()
             #if DEBUG

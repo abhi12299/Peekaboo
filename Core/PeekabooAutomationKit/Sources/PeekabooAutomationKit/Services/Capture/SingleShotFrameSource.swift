@@ -34,7 +34,8 @@ final class SingleShotFrameSource: CaptureFrameSource {
         let scalePlan = Self.scalePlan(for: display, preference: request.scale)
         let scaleFactor = scalePlan.outputScale
 
-        let filter = SCContentFilter(display: display, excludingWindows: [])
+        // Phantom cursor overlays (any agent's) must never appear in the agent's own captures.
+        let filter = await SCContentFilter(display: display, excludingWindows: Self.phantomCursorWindows())
         let config = SCStreamConfiguration()
         config.sourceRect = sourceRect
         config.width = Int(sourceRect.width * scaleFactor)
@@ -83,5 +84,16 @@ final class SingleShotFrameSource: CaptureFrameSource {
             displayID: display.displayID,
             fallbackPixelWidth: display.width,
             frameWidth: display.frame.width)
+    }
+
+    /// Live phantom cursor windows to exclude. Costs one window-list read when no cursor exists.
+    static func phantomCursorWindows() async -> [SCWindow] {
+        let ids = PhantomCursorEndpoint.liveOverlayWindowIDs()
+        guard !ids.isEmpty,
+              let content = try? await ScreenCaptureKitCaptureGate.shareableContent(
+                  excludingDesktopWindows: true,
+                  onScreenWindowsOnly: true)
+        else { return [] }
+        return content.windows.filter { ids.contains($0.windowID) }
     }
 }

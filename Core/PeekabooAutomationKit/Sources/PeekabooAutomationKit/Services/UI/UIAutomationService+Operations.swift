@@ -169,6 +169,7 @@ extension UIAutomationService {
         self.logger.debug("Delegating background click to ClickService")
         let automationTarget: UIAutomationTarget = try .process(UIAutomationTarget.Process(
             processIdentifier: targetProcessIdentifier))
+        await self.travelPhantomCursor(to: target, snapshotId: snapshotId)
         let result = try await self.normalizingSnapshotErrors {
             try await self.clickService.click(
                 target: target,
@@ -242,6 +243,7 @@ extension UIAutomationService {
         let automationTarget: UIAutomationTarget = try .process(UIAutomationTarget.Process(
             processIdentifier: expectedProcessIdentity.processIdentifier,
             identity: expectedProcessIdentity))
+        await self.travelPhantomCursor(to: target, snapshotId: snapshotId)
         let result = try await self.normalizingSnapshotErrors {
             try await self.clickService.click(
                 target: target,
@@ -324,6 +326,7 @@ extension UIAutomationService {
             bounds: windowEvidence.bounds)
         let automationTarget: UIAutomationTarget = .exactWindow(exactWindow)
         self.logger.debug("Delegating exact-window background click to ClickService")
+        await self.travelPhantomCursor(to: target, snapshotId: snapshotId)
         let result = try await self.normalizingSnapshotErrors {
             try await self.clickService.click(
                 target: target,
@@ -360,7 +363,16 @@ extension UIAutomationService {
         fallbackPoint: CGPoint? = nil,
         visualizerTarget: VisualizerTargetWindow? = nil) async
     {
-        guard targetProcessIdentifier == nil else { return }
+        if targetProcessIdentifier != nil {
+            // Opt-in phantom cursor: background delivery never moves the real pointer, so the agent cursor
+            // (already travelled there before dispatch) plays the click effect at the delivered point.
+            if let clickPoint = Self.visualFeedbackPoint(actionAnchor: actionAnchor, fallbackPoint: fallbackPoint) {
+                await BackgroundPhantomCursor.click(at: clickPoint, type: clickType)
+            }
+            return
+        }
+        // Foreground input drives the real pointer; keep the phantom cursor out of its way.
+        await BackgroundPhantomCursor.hide()
         if let clickPoint = Self.visualFeedbackPoint(actionAnchor: actionAnchor, fallbackPoint: fallbackPoint) {
             _ = await self.feedbackClient.showClickFeedback(
                 at: clickPoint,
@@ -376,6 +388,26 @@ extension UIAutomationService {
             return try await operation()
         } catch let error as ActionInputError where error == .staleElement {
             throw PeekabooError.snapshotStale("target element is no longer available")
+        }
+    }
+
+    /// Moves the phantom cursor onto the click target before a background click is dispatched, so the picture
+    /// and the real effect stay in step. Query targets resolve inside the click service and only get the
+    /// post-dispatch effect.
+    func travelPhantomCursor(to target: ClickTarget, snapshotId: String?) async {
+        guard BackgroundPhantomCursor.isEnabled else { return }
+        switch target {
+        case let .coordinates(point):
+            await BackgroundPhantomCursor.travel(to: point, target: nil)
+        case let .elementId(id):
+            guard let snapshotId,
+                  let result = try? await self.snapshotManager.getDetectionResult(snapshotId: snapshotId),
+                  let element = result.elements.findById(id)
+            else { return }
+            let bounds = element.bounds
+            await BackgroundPhantomCursor.travel(to: CGPoint(x: bounds.midX, y: bounds.midY), target: bounds)
+        case .query:
+            return
         }
     }
 

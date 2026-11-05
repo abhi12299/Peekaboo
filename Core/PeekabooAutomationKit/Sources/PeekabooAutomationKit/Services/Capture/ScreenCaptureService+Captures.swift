@@ -4,6 +4,14 @@ import PeekabooFoundation
 
 @MainActor
 extension ScreenCaptureService {
+    /// The classic engine shells out to `screencapture`, which cannot exclude windows, so this process's own
+    /// phantom cursor is hidden first (it reappears on the next action). ScreenCaptureKit captures exclude
+    /// every live cursor window as well. Costs one window-list read when no cursor is on screen.
+    static func hidePhantomCursorBeforeDesktopCapture() async {
+        guard PhantomCursorEndpoint.isEnabled(), !PhantomCursorEndpoint.liveOverlayWindowIDs().isEmpty else { return }
+        await PhantomCursorClient.send(PhantomCursorRequest(kind: .hide), timeout: 0.2, spawnIfNeeded: false)
+    }
+
     func captureScreenImpl(
         displayIndex: Int?,
         visualizerMode: CaptureVisualizerMode,
@@ -11,6 +19,7 @@ extension ScreenCaptureService {
     {
         let metadata: Metadata = ["displayIndex": displayIndex ?? "main"]
         let apis = self.fallbackRunner.apis(for: Self.captureEnginePreference)
+        await Self.hidePhantomCursorBeforeDesktopCapture()
         return try await self.performOperation(.screen, metadata: metadata) { correlationId in
             try await self.fallbackRunner.runCapture(
                 operationName: CaptureOperation.screen.metricName,
@@ -128,6 +137,7 @@ extension ScreenCaptureService {
             "rect": "\(rect.origin.x),\(rect.origin.y) \(rect.width)x\(rect.height)",
         ]
         let apis = self.fallbackRunner.apis(for: Self.captureEnginePreference)
+        await Self.hidePhantomCursorBeforeDesktopCapture()
 
         return try await self.performOperation(.area, metadata: metadata) { correlationId in
             try await self.fallbackRunner.runCapture(
