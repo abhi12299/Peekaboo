@@ -252,7 +252,13 @@ public final class VisualizationClient: @unchecked Sendable {
     private func post(event: VisualizerEvent) {
         let descriptor = "\(event.id.uuidString)|\(event.kind.rawValue)"
         self.log(.debug, "Dispatching visualizer event \(event.kind.rawValue)")
-        self.distributedCenter.post(name: .visualizerEventDispatched, object: descriptor)
+        // AppKit suspends distributed-notification delivery to apps that are not active (the
+        // menu-bar visualizer host almost never is), so ask for immediate delivery.
+        self.distributedCenter.postNotificationName(
+            .visualizerEventDispatched,
+            object: descriptor,
+            userInfo: nil,
+            deliverImmediately: true)
     }
 
     private func scheduleCleanupIfNeeded() {
